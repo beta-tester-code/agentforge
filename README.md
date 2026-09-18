@@ -98,19 +98,19 @@ See [docs/TESTING.md](docs/TESTING.md).
 
 ---
 
-## Design partners (paid, 7-day window)
+## Design partners (paid, this week)
 
 If production agents are burning tokens and you want a focused audit / setup:
 
 → **[DESIGN_PARTNER.md](DESIGN_PARTNER.md)**  
-→ Open an issue titled `[design-partner] ...`
+→ [Open a Design Partner issue](https://github.com/beta-tester-code/agentforge/issues/new?template=design_partner.md) (label `design-partner`)
 
-| Package | Price |
-|---------|-------|
-| Audit only | USD 150 |
-| Audit + setup | USD 400 |
+| Package | Price | After you apply |
+|---------|-------|-----------------|
+| Audit only | USD 150 | Reply in 1 business day; invoice / Stripe link; work after pay |
+| Audit + setup | USD 400 | Same |
 
-Payment is arranged off-GitHub (invoice / Stripe). Opening an issue is the application, not a charge.
+Opening an issue is the application, not a charge. Email fallback: `eron6237@gmail.com`.
 
 **Later:** hosted traces / team observability on the open-source core.
 
