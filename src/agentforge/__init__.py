@@ -5,6 +5,8 @@ from agentforge.compaction import CompactionConfig, compact_memory
 from agentforge.memory import Memory, Message
 from agentforge.observability import Tracer
 from agentforge.runner import Runner
+from agentforge.tools import Tool, ToolRegistry
+from agentforge.tokens import get_token_counter
 
 __version__ = "0.1.0"
 
@@ -16,5 +18,8 @@ __all__ = [
     "Runner",
     "CompactionConfig",
     "compact_memory",
+    "Tool",
+    "ToolRegistry",
+    "get_token_counter",
     "__version__",
 ]

@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from agentforge.agent import Agent
-from agentforge.compaction import CompactionConfig, compact_memory, estimate_tokens
-from agentforge.memory import Memory, Message
+from agentforge.compaction import CompactionConfig, compact_memory
+from agentforge.memory import Memory
 from agentforge.observability import Tracer
+from agentforge.tokens import get_token_counter
 
 
 class Runner:
@@ -20,14 +21,15 @@ class Runner:
         compaction_config: CompactionConfig | None = None,
         token_counter: Callable[[str], int] | None = None,
         llm_call: Callable[..., str] | None = None,
+        model_name: str = "gpt-4o",
     ):
         self.agent = agent
         self.memory = Memory()
         self.tracer = Tracer()
         self.step = 0
         self.compaction_config = compaction_config or CompactionConfig()
-        self.token_counter = token_counter or estimate_tokens
-        self.llm_call = llm_call  # optional: (messages) -> response text
+        self.token_counter = token_counter or get_token_counter(model_name)
+        self.llm_call = llm_call  # optional: (messages: list[dict]) -> str
 
     def _count(self, text: str) -> int:
         return self.token_counter(text)
@@ -37,7 +39,7 @@ class Runner:
             self.memory,
             self.compaction_config,
             token_counter=self.token_counter,
-            summarizer=None,  # real summarizer comes later
+            summarizer=None,  # real LLM summarizer comes later
         )
         if result.actions:
             self.tracer.record(
@@ -64,13 +66,11 @@ class Runner:
         self.tracer.record(self.step, "user_input", input_tokens=user_tokens)
         self.step += 1
 
-        # Build simple prompt context
         system = self.agent.system_prompt
         if self.agent.goal:
             system = f"{system}\n\nGoal: {self.agent.goal}"
 
         if self.llm_call is not None:
-            # Real path: call the provided LLM function
             messages_for_llm = [{"role": "system", "content": system}]
             for m in self.memory.messages:
                 messages_for_llm.append({"role": m.role, "content": m.content})
@@ -78,7 +78,6 @@ class Runner:
             reply = self.llm_call(messages_for_llm)
             reply_tokens = self._count(reply)
         else:
-            # Skeleton path (no LLM wired yet)
             reply = (
                 f"[AgentForge] Received: {user_input!r}. "
                 f"LLM not wired yet — this is the skeleton response."
