@@ -1,31 +1,38 @@
-# AgentForge
+# AgentForge (beta-tester-code)
 
-**Open-source toolkit for building reliable, token-efficient AI agents.**
+**Python toolkit for token-efficient, observable agents — compaction first, framework last.**
+
+This is *not* DataBassGit/AgentForge, agentforge.dev, Agentman, or the ICP protocol.
+This repo: [github.com/beta-tester-code/agentforge](https://github.com/beta-tester-code/agentforge)
 
 Focus:
 
-- Extreme **token efficiency**
-- Strong **context control** (less drift / context rot)
-- Lightweight **observability**
-- Minimal runtime overhead
+- Measure every token that hits the model
+- Offload fat tool results before they rot the window
+- Summarize only after the recent tail is kept lossless
+- Emit a compact run trace (local now; hosted later)
 
-Not another heavy framework. A small, measurable toolkit.
+Not a second LangGraph. A small runtime you can drop next to an existing loop when **CrewAI/LangGraph token bills** and **context rot** become the problem.
+
+See [docs/WHY.md](docs/WHY.md) for the market argument.
 
 ---
 
 ## Status
 
-**v0.1.0 — usable MVP**
+**v0.1.0 — usable MVP** · created 2026-09-17 · **0 stars / 0 paying customers** (honest).
 
 | Feature | Status |
 |---------|--------|
 | Agent + Memory + Tracer | ✅ |
-| Token counting | ✅ |
+| Token counting (tiktoken) | ✅ |
 | Tool registry + multi-step tool loop | ✅ |
 | Tool-result offloading + summarization compaction | ✅ |
 | OpenAI-compatible client (OpenAI / Groq / Gemini / …) | ✅ |
 | CLI with provider presets | ✅ |
 | Mock + optional live tests | ✅ |
+| Hosted traces | planned (paid) |
+| PyPI publish | not yet |
 
 ---
 
@@ -36,8 +43,6 @@ git clone https://github.com/beta-tester-code/agentforge.git
 cd agentforge
 pip install -e ".[dev]"
 ```
-
-Or without install:
 
 ```bash
 PYTHONPATH=src pytest -q
@@ -83,40 +88,41 @@ print(runner.run("Hello"))
 print(runner.get_trace_summary())
 ```
 
-### Tests
+### Compaction bench (offline)
 
 ```bash
-PYTHONPATH=src pytest -q                        # offline
-AGENTFORGE_LIVE=1 PYTHONPATH=src pytest -q      # needs key in env
+PYTHONPATH=src python scripts/bench_compaction.py
 ```
 
 See [docs/TESTING.md](docs/TESTING.md).
 
 ---
 
-## Design partners (paid)
+## Design partners (paid, 7-day window)
 
-If your agents are burning tokens and you want a focused audit / setup:
+If production agents are burning tokens and you want a focused audit / setup:
 
 → **[DESIGN_PARTNER.md](DESIGN_PARTNER.md)**  
-→ Open an issue with title `[design-partner] ...`
+→ Open an issue titled `[design-partner] ...`
 
 | Package | Price |
 |---------|-------|
 | Audit only | USD 150 |
 | Audit + setup | USD 400 |
 
-**Later:** hosted traces / team observability on top of the open-source core. Design partners shape that roadmap.
+Payment is arranged off-GitHub (invoice / Stripe). Opening an issue is the application, not a charge.
+
+**Later:** hosted traces / team observability on the open-source core.
 
 ---
 
 ## Design Principles
 
-1. Measure everything that costs tokens  
-2. Prefer reversible operations (offload before destroy)  
-3. Keep the recent tail lossless  
-4. Minimal surface area  
-5. Open by default  
+1. Measure everything that costs tokens
+2. Prefer reversible operations (offload before destroy)
+3. Keep the recent tail lossless
+4. Minimal surface area
+5. Open by default — do not claim traction we do not have
 
 ---
 
