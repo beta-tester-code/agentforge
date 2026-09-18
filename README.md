@@ -9,8 +9,6 @@ Focus:
 - Lightweight **observability**
 - Minimal runtime overhead
 
-Not another heavy framework. A small, measurable toolkit.
-
 ---
 
 ## Status
@@ -20,13 +18,12 @@ Not another heavy framework. A small, measurable toolkit.
 | Feature | Status |
 |---------|--------|
 | Agent + Memory + Tracer | ✅ |
-| Token counting (tiktoken / fallback) | ✅ |
+| Token counting | ✅ |
 | Tool registry + multi-step tool loop | ✅ |
-| Tool-result offloading | ✅ |
-| LLM summarization compaction | ✅ |
-| OpenAI-compatible LLM client | ✅ |
-| CLI (`agentforge run`) | ✅ |
-| Basic tests | ✅ |
+| Tool-result offloading + summarization compaction | ✅ |
+| OpenAI-compatible client (OpenAI / Groq / Gemini / …) | ✅ |
+| CLI with provider presets | ✅ |
+| Mock + optional live tests | ✅ |
 
 ---
 
@@ -38,34 +35,35 @@ cd agentforge
 pip install -e ".[dev]"
 ```
 
+Or without install:
+
+```bash
+PYTHONPATH=src pytest -q
+```
+
 ---
 
 ## Quick Start
 
-### Python
+### Skeleton (no key)
 
 ```bash
-python examples/basic_agent.py
-python examples/with_tools.py
-
-export OPENAI_API_KEY=sk-...
-python examples/with_tools.py
+PYTHONPATH=src python examples/basic_agent.py
+PYTHONPATH=src python -m agentforge.cli run -p "Hello"
 ```
 
-### CLI
+### Gemini (free tier key from Google AI Studio)
 
 ```bash
-agentforge --version
+export OPENAI_API_KEY=your-key
+PYTHONPATH=src python -m agentforge.cli run --provider gemini -p "What is context rot?" --trace
+```
 
-# skeleton (no key)
-agentforge run -p "Hello"
+### Groq
 
-# real model
-export OPENAI_API_KEY=sk-...
-agentforge run -p "What is context rot?" --trace
-
-# other OpenAI-compatible providers
-agentforge run -p "Hi" --base-url https://api.groq.com/openai/v1 -m llama-3.3-70b-versatile
+```bash
+export OPENAI_API_KEY=your-groq-key
+PYTHONPATH=src python -m agentforge.cli run --provider groq -p "Hi" --trace
 ```
 
 ### Library
@@ -73,13 +71,15 @@ agentforge run -p "Hi" --base-url https://api.groq.com/openai/v1 -m llama-3.3-70
 ```python
 from agentforge import Agent, Runner, make_llm_call, ToolRegistry
 
-llm = make_llm_call(model="gpt-4o-mini")
-agent = Agent(
-    name="demo",
-    goal="Be helpful and concise",
-    system_prompt="You are a careful assistant.",
+llm = make_llm_call(
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+    model="gemini-3.5-flash",
 )
-runner = Runner(agent, llm_call=llm)
+tools = ToolRegistry()
+# tools.register("name", "description", func)
+
+agent = Agent(name="demo", goal="Be helpful", system_prompt="Be careful and concise.")
+runner = Runner(agent, tools=tools, llm_call=llm)
 print(runner.run("Hello"))
 print(runner.get_trace_summary())
 ```
@@ -87,8 +87,11 @@ print(runner.get_trace_summary())
 ### Tests
 
 ```bash
-pytest -q
+PYTHONPATH=src pytest -q                        # offline
+AGENTFORGE_LIVE=1 PYTHONPATH=src pytest -q      # needs key in env
 ```
+
+See [docs/TESTING.md](docs/TESTING.md).
 
 ---
 
@@ -99,23 +102,6 @@ pytest -q
 3. Keep the recent tail lossless  
 4. Minimal surface area  
 5. Open by default  
-
----
-
-## Layout
-
-```text
-src/agentforge/
-├── agent.py
-├── memory.py
-├── observability.py
-├── runner.py
-├── compaction.py
-├── tokens.py
-├── tools.py
-├── llm.py
-└── cli.py
-```
 
 ---
 

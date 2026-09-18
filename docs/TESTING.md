@@ -8,63 +8,49 @@ PYTHONPATH=src python scripts/bench_compaction.py
 PYTHONPATH=src python examples/basic_agent.py
 ```
 
-Includes:
+Includes unit tests, mock tool-loop tests, and compaction benchmark.
 
-- unit tests (memory, compaction, parse)
-- **mock LLM tool-loop integration tests** (`tests/test_tool_loop_mock.py`)
-- compaction benchmark
+## Layer 2 — Live cloud APIs (optional)
 
-This layer is the default CI path.
+Requires a key in the **environment** (never commit keys).
 
-## Layer 2 — Free cloud APIs (optional, needs a key)
-
-AgentForge already speaks OpenAI-compatible HTTP. Preferred free options:
-
-| Provider | Env var | Base URL | Notes |
-|----------|---------|----------|-------|
-| **Groq** | `GROQ_API_KEY` or `LLM_API_KEY` | `https://api.groq.com/openai/v1` | Fast, good for agent loops |
-| **Google AI Studio** | key via Gemini OpenAI-compat proxy or custom | check current docs | Generous free tier |
-| **OpenRouter free models** | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | Use model ids with `:free` |
-
-Example:
+### Verified: Google Gemini (OpenAI-compatible)
 
 ```bash
-export LLM_API_KEY=...          # or GROQ_API_KEY
-export OPENAI_API_KEY=$LLM_API_KEY  # our client also reads this
+export OPENAI_API_KEY="your-google-ai-studio-key"
+export AGENTFORGE_LIVE=1
+export AGENTFORGE_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/"
+export AGENTFORGE_MODEL="gemini-3.5-flash"
 
-python -c "
-from agentforge import Agent, Runner, make_llm_call
-llm = make_llm_call(
-    base_url='https://api.groq.com/openai/v1',
-    model='llama-3.3-70b-versatile',
-)
-r = Runner(Agent('t','goal','You are concise.'), llm_call=llm)
-print(r.run('Say hi in 5 words'))
-print(r.get_trace_summary())
-"
+PYTHONPATH=src pytest -q tests/test_live_optional.py
 ```
 
-**Human step only:** create the free key and connect/export it.  
-Everything after that is automated.
+Notes (validated 2026-09):
 
-## Layer 3 — Local (Ollama)
+- `gemini-2.5-flash` may return 404 for new users; prefer `gemini-3.5-flash` / `gemini-3.1-flash-lite`.
+- Tool loop with text `TOOL_CALL` format works with Gemini.
 
-If Ollama is installed on a machine:
+CLI:
 
 ```bash
-ollama pull llama3.2
-
-python -c "
-from agentforge import Agent, Runner, make_llm_call
-llm = make_llm_call(base_url='http://localhost:11434/v1', api_key='ollama', model='llama3.2')
-print(Runner(Agent('t','g','Be brief.'), llm_call=llm).run('Hello'))
-"
+export OPENAI_API_KEY=...
+PYTHONPATH=src python -m agentforge.cli run --provider gemini -p "Hello" --trace
 ```
 
-Not available in the default remote sandbox (no Ollama binary).
+### Other providers
 
-## What we do *not* depend on
+| Provider | Base URL | Notes |
+|----------|----------|-------|
+| Groq | `https://api.groq.com/openai/v1` | Fast; `--provider groq` |
+| OpenRouter | `https://openrouter.ai/api/v1` | Prefer `:free` model ids |
+| Ollama local | `http://localhost:11434/v1` | `api_key=ollama` |
 
-- Paid OpenAI credits for core correctness
-- MCP for unit/integration tests
-- Manual clicking beyond pasting a free API key into the environment
+## Layer 3 — Local Ollama
+
+Only if Ollama is installed on the machine. Not available in the default remote sandbox.
+
+## Policy
+
+- Default CI = Layer 1 only
+- Live tests are opt-in via `AGENTFORGE_LIVE=1`
+- Never paste API keys into git, issues, or chat if avoidable; rotate if exposed

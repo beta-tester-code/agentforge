@@ -12,6 +12,26 @@ from agentforge.compaction import CompactionConfig
 from agentforge.llm import make_llm_call
 from agentforge.runner import Runner
 
+# Verified OpenAI-compatible presets (Sep 2026)
+PRESETS: dict[str, dict[str, str]] = {
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+    },
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": "llama-3.3-70b-versatile",
+    },
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "model": "gemini-3.5-flash",
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "openrouter/auto",
+    },
+}
+
 
 def cmd_version(_: argparse.Namespace) -> int:
     print(f"agentforge {__version__}")
@@ -24,25 +44,44 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("Error: provide a prompt with -p/--prompt", file=sys.stderr)
         return 2
 
+    base_url = args.base_url
+    model = args.model
+    if args.provider:
+        preset = PRESETS.get(args.provider.lower())
+        if not preset:
+            print(
+                f"Unknown provider {args.provider!r}. "
+                f"Choose from: {', '.join(PRESETS)}",
+                file=sys.stderr,
+            )
+            return 2
+        base_url = preset["base_url"] if args.base_url == PRESETS["openai"]["base_url"] else args.base_url
+        # only override model if user left the default openai model
+        if args.model == PRESETS["openai"]["model"]:
+            model = preset["model"]
+        else:
+            model = args.model
+        if args.base_url == PRESETS["openai"]["base_url"]:
+            base_url = preset["base_url"]
+
     agent = Agent(
         name="cli",
         goal="Answer the user helpfully and concisely.",
         system_prompt="You are a careful, concise assistant.",
     )
 
+    api_key = args.api_key or os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
     llm_call = None
-    if os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or args.api_key:
-        llm_call = make_llm_call(
-            api_key=args.api_key,
-            base_url=args.base_url,
-            model=args.model,
-        )
+    if api_key:
+        llm_call = make_llm_call(api_key=api_key, base_url=base_url, model=model)
+    else:
+        print("No API key (OPENAI_API_KEY / LLM_API_KEY) — skeleton mode.", file=sys.stderr)
 
     runner = Runner(
         agent,
         llm_call=llm_call,
         compaction_config=CompactionConfig(max_tokens=args.max_tokens),
-        model_name=args.model,
+        model_name=model,
     )
 
     reply = runner.run(prompt, max_steps=args.max_steps)
@@ -66,6 +105,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_p = sub.add_parser("run", help="Run a one-shot agent prompt")
     run_p.add_argument("-p", "--prompt", required=True, help="User prompt")
+    run_p.add_argument(
+        "--provider",
+        choices=sorted(PRESETS.keys()),
+        default=None,
+        help="Preset provider (gemini, groq, openai, openrouter)",
+    )
     run_p.add_argument("-m", "--model", default="gpt-4o-mini", help="Model name")
     run_p.add_argument(
         "--base-url",
