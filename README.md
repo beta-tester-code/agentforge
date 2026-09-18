@@ -9,6 +9,8 @@ Focus:
 - Lightweight **observability**
 - Minimal runtime overhead
 
+Not another heavy framework. A small, measurable toolkit.
+
 ---
 
 ## Status
@@ -52,7 +54,7 @@ PYTHONPATH=src python examples/basic_agent.py
 PYTHONPATH=src python -m agentforge.cli run -p "Hello"
 ```
 
-### Gemini (free tier key from Google AI Studio)
+### Gemini (Google AI Studio)
 
 ```bash
 export OPENAI_API_KEY=your-key
@@ -75,11 +77,8 @@ llm = make_llm_call(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
     model="gemini-3.5-flash",
 )
-tools = ToolRegistry()
-# tools.register("name", "description", func)
-
 agent = Agent(name="demo", goal="Be helpful", system_prompt="Be careful and concise.")
-runner = Runner(agent, tools=tools, llm_call=llm)
+runner = Runner(agent, llm_call=llm)
 print(runner.run("Hello"))
 print(runner.get_trace_summary())
 ```
@@ -92,6 +91,22 @@ AGENTFORGE_LIVE=1 PYTHONPATH=src pytest -q      # needs key in env
 ```
 
 See [docs/TESTING.md](docs/TESTING.md).
+
+---
+
+## Design partners (paid)
+
+If your agents are burning tokens and you want a focused audit / setup:
+
+→ **[DESIGN_PARTNER.md](DESIGN_PARTNER.md)**  
+→ Open an issue with title `[design-partner] ...`
+
+| Package | Price |
+|---------|-------|
+| Audit only | USD 150 |
+| Audit + setup | USD 400 |
+
+**Later:** hosted traces / team observability on top of the open-source core. Design partners shape that roadmap.
 
 ---
 
