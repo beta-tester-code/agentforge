@@ -1,7 +1,6 @@
 """Minimal example using the AgentForge skeleton."""
 
-from agentforge.agent import Agent
-from agentforge.runner import Runner
+from agentforge import Agent, Runner, CompactionConfig
 
 
 def main() -> None:
@@ -11,10 +10,14 @@ def main() -> None:
         system_prompt="You are a careful, concise assistant.",
     )
 
-    runner = Runner(agent)
-    result = runner.run("Hello, AgentForge")
+    runner = Runner(
+        agent,
+        compaction_config=CompactionConfig(max_tokens=8_000, keep_recent_messages=4),
+    )
+
+    result = runner.run("Hello, AgentForge. What is your focus?")
     print(result)
-    print("\nTracer summary:", runner.tracer.summary())
+    print("\nTrace summary:", runner.get_trace_summary())
 
 
 if __name__ == "__main__":
