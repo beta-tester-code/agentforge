@@ -1,7 +1,11 @@
 """AgentForge - Token-efficient, observable AI agents."""
 
 from agentforge.agent import Agent
-from agentforge.compaction import CompactionConfig, compact_memory
+from agentforge.compaction import (
+    CompactionConfig,
+    compact_memory,
+    make_llm_summarizer,
+)
 from agentforge.llm import LLMError, OpenAICompatibleClient, make_llm_call
 from agentforge.memory import Memory, Message
 from agentforge.observability import Tracer
@@ -19,6 +23,7 @@ __all__ = [
     "Runner",
     "CompactionConfig",
     "compact_memory",
+    "make_llm_summarizer",
     "Tool",
     "ToolRegistry",
     "get_token_counter",

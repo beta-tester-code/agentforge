@@ -7,19 +7,16 @@ import re
 from typing import Any, Callable
 
 from agentforge.agent import Agent
-from agentforge.compaction import CompactionConfig, compact_memory
+from agentforge.compaction import (
+    CompactionConfig,
+    compact_memory,
+    make_llm_summarizer,
+)
 from agentforge.memory import Memory
 from agentforge.observability import Tracer
 from agentforge.tokens import get_token_counter
 from agentforge.tools import ToolRegistry
 
-
-# Very small, robust tool-call format we ask the model to use.
-# Example:
-# TOOL_CALL
-# name: search
-# args: {"query": "agent frameworks 2026"}
-# END_TOOL_CALL
 
 TOOL_CALL_RE = re.compile(
     r"TOOL_CALL\s*\n\s*name:\s*(?P<name>\S+)\s*\n\s*args:\s*(?P<args>\{.*?\})\s*\n\s*END_TOOL_CALL",
@@ -54,6 +51,7 @@ class Runner:
         token_counter: Callable[[str], int] | None = None,
         llm_call: Callable[[list[dict[str, str]]], str] | None = None,
         model_name: str = "gpt-4o-mini",
+        use_llm_summarizer: bool = True,
     ):
         self.agent = agent
         self.tools = tools or ToolRegistry()
@@ -64,7 +62,10 @@ class Runner:
         self.token_counter = token_counter or get_token_counter(model_name)
         self.llm_call = llm_call
 
-        # Also register tools that were added directly on the Agent
+        self._summarizer: Callable | None = None
+        if use_llm_summarizer and llm_call is not None:
+            self._summarizer = make_llm_summarizer(llm_call)
+
         for name, func in agent.tools.items():
             if self.tools.get(name) is None:
                 self.tools.register(name, description=f"Tool '{name}'", func=func)
@@ -97,7 +98,7 @@ class Runner:
             self.memory,
             self.compaction_config,
             token_counter=self.token_counter,
-            summarizer=None,
+            summarizer=self._summarizer,
         )
         if result.actions:
             self.tracer.record(
@@ -116,7 +117,6 @@ class Runner:
         ]
         for m in self.memory.messages:
             role = m.role if m.role in ("user", "assistant", "system", "tool") else "user"
-            # Some providers don't like role=tool; map to user with a prefix
             if role == "tool":
                 content = f"[tool result]\n{m.content}"
                 role = "user"
@@ -162,7 +162,6 @@ class Runner:
 
             parsed = _parse_tool_call(reply)
             if parsed is None:
-                # Final answer
                 self.memory.add("assistant", reply, tokens=reply_tokens)
                 self.tracer.record(
                     self.step,
@@ -173,7 +172,6 @@ class Runner:
                 final_reply = reply
                 break
 
-            # Tool call path
             tool_name, tool_args = parsed
             self.memory.add("assistant", reply, tokens=reply_tokens)
             self.tracer.record(

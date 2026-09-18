@@ -20,9 +20,9 @@ class CompactionConfig:
 
     max_tokens: int = 32_000
     keep_recent_messages: int = 6
-    summarize_threshold_ratio: float = 0.75  # start considering compaction at 75%
+    summarize_threshold_ratio: float = 0.75
     offload_tool_results: bool = True
-    max_tool_result_chars: int = 2_000  # keep only a preview above this size
+    max_tool_result_chars: int = 2_000
 
 
 @dataclass
@@ -35,10 +35,6 @@ class CompactionResult:
 
 
 def estimate_tokens(text: str) -> int:
-    """Very cheap token estimate (approx 4 chars/token).
-
-    Real counting with tiktoken is done at the Runner level when available.
-    """
     if not text:
         return 0
     return max(1, len(text) // 4)
@@ -53,10 +49,7 @@ def offload_large_tool_results(
     config: CompactionConfig,
     store: dict[str, str] | None = None,
 ) -> list[str]:
-    """Replace large tool outputs with a short preview + pointer.
-
-    This is reversible: the full content stays in `store` if provided.
-    """
+    """Replace large tool outputs with a short preview + pointer (reversible)."""
     actions: list[str] = []
     if store is None:
         store = {}
@@ -81,6 +74,18 @@ def offload_large_tool_results(
     return actions
 
 
+def default_summarizer(messages: list[Message]) -> str:
+    """Cheap extractive fallback when no LLM summarizer is provided."""
+    lines = []
+    for m in messages:
+        role = m.role
+        content = m.content.replace("\n", " ").strip()
+        if len(content) > 180:
+            content = content[:177] + "..."
+        lines.append(f"- [{role}] {content}")
+    return "Summary of earlier context:\n" + "\n".join(lines)
+
+
 def compact_memory(
     memory: Memory,
     config: CompactionConfig,
@@ -89,14 +94,13 @@ def compact_memory(
 ) -> CompactionResult:
     """Apply compaction strategy to memory.
 
-    Strategy order:
+    Order:
     1. Offload large tool results (reversible)
-    2. If still over threshold and summarizer is available, summarize older messages
-       while keeping the recent tail intact.
+    2. If still over threshold, summarize older messages and keep recent tail
     """
     counter = token_counter or estimate_tokens
+    summarize = summarizer or default_summarizer
 
-    # Ensure every message has a token count
     for m in memory.messages:
         if m.tokens is None:
             m.tokens = counter(m.content)
@@ -105,7 +109,6 @@ def compact_memory(
     messages_before = len(memory.messages)
     actions: list[str] = []
 
-    # 1. Offload large tool results
     if config.offload_tool_results:
         offload_store: dict[str, str] = memory.state.setdefault("_offload_store", {})
         actions.extend(offload_large_tool_results(memory, config, offload_store))
@@ -113,13 +116,15 @@ def compact_memory(
     tokens_now = total_message_tokens(memory.messages)
     threshold = int(config.max_tokens * config.summarize_threshold_ratio)
 
-    # 2. Summarize older messages if still over threshold
-    if tokens_now > threshold and summarizer is not None and len(memory.messages) > config.keep_recent_messages:
+    if (
+        tokens_now > threshold
+        and len(memory.messages) > config.keep_recent_messages
+    ):
         keep = config.keep_recent_messages
         older = memory.messages[:-keep]
         recent = memory.messages[-keep:]
 
-        summary_text = summarizer(older)
+        summary_text = summarize(older)
         summary_msg = Message(
             role="system",
             content=f"[context summary]\n{summary_text}",
@@ -138,3 +143,34 @@ def compact_memory(
         tokens_after=tokens_after,
         actions=actions,
     )
+
+
+def make_llm_summarizer(
+    llm_call: Callable[[list[dict[str, str]]], str],
+) -> Callable[[list[Message]], str]:
+    """Build a summarizer that uses an LLM call."""
+
+    def _summarize(messages: list[Message]) -> str:
+        transcript = []
+        for m in messages:
+            transcript.append(f"{m.role.upper()}: {m.content}")
+        body = "\n".join(transcript)
+
+        prompt = [
+            {
+                "role": "system",
+                "content": (
+                    "You compress conversation history for an AI agent. "
+                    "Keep decisions, goals, tool outcomes, constraints and open questions. "
+                    "Drop small talk and repeated content. Be dense and factual. "
+                    "Return only the summary."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Compress the following history:\n\n{body}",
+            },
+        ]
+        return llm_call(prompt).strip()
+
+    return _summarize
