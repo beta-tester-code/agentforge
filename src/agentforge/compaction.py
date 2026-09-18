@@ -22,14 +22,13 @@ class CompactionConfig:
 
     max_tokens: int = 32_000
     keep_recent_messages: int = 6
-    # Prefer token budget for tail when set (>0). Falls back to keep_recent_messages.
+    # Prefer token budget for tail when set (>0). Falls back to keep_recent_messages
+    # if the token budget would retain the entire history (otherwise we never compact).
     keep_recent_tokens: int = 4_000
     summarize_threshold_ratio: float = 0.75
     offload_tool_results: bool = True
     max_tool_result_chars: int = 2_000
-    # Cap extractive/default summary size
     max_summary_chars: int = 2_400
-    # Scaled summary budget as fraction of compressed content (LLM path)
     summary_ratio: float = 0.2
     summary_min_tokens: int = 200
     summary_max_tokens: int = 1_200
@@ -87,30 +86,46 @@ def offload_large_tool_results(
     return actions
 
 
+def _tail_by_messages(messages: list[Message], keep: int) -> tuple[list[Message], list[Message]]:
+    keep = max(1, keep)
+    if len(messages) <= keep:
+        return [], list(messages)
+    return messages[:-keep], messages[-keep:]
+
+
+def _tail_by_tokens(messages: list[Message], budget: int) -> tuple[list[Message], list[Message]]:
+    acc = 0
+    tail: list[Message] = []
+    for m in reversed(messages):
+        t = m.tokens or estimate_tokens(m.content)
+        if tail and acc + t > budget:
+            break
+        tail.append(m)
+        acc += t
+    tail.reverse()
+    if not tail:
+        tail = messages[-1:]
+    older = messages[: len(messages) - len(tail)]
+    return older, tail
+
+
 def _select_tail(messages: list[Message], config: CompactionConfig) -> tuple[list[Message], list[Message]]:
-    """Split into older + recent tail using token budget when possible."""
+    """Split into older + recent tail.
+
+    Token budget is preferred, but if it would keep *everything* we fall back to
+    message count so compaction can still fire when over threshold.
+    """
     if not messages:
         return [], []
 
     if config.keep_recent_tokens > 0:
-        acc = 0
-        tail: list[Message] = []
-        for m in reversed(messages):
-            t = m.tokens or estimate_tokens(m.content)
-            if tail and acc + t > config.keep_recent_tokens:
-                break
-            tail.append(m)
-            acc += t
-        tail.reverse()
-        if not tail:
-            tail = messages[-1:]
-        older = messages[: len(messages) - len(tail)]
-        return older, tail
+        older, tail = _tail_by_tokens(messages, config.keep_recent_tokens)
+        if older:
+            return older, tail
+        # Token budget swallowed the whole history — force message-based split
+        return _tail_by_messages(messages, config.keep_recent_messages)
 
-    keep = max(1, config.keep_recent_messages)
-    if len(messages) <= keep:
-        return [], list(messages)
-    return messages[:-keep], messages[-keep:]
+    return _tail_by_messages(messages, config.keep_recent_messages)
 
 
 def default_summarizer(messages: list[Message]) -> str:
@@ -184,7 +199,6 @@ def compact_memory(
         older, recent = _select_tail(memory.messages, config)
         if older:
             prev = _extract_previous_summary(older)
-            # Drop old summary messages from the body being re-summarized
             body = [
                 m
                 for m in older
@@ -194,7 +208,6 @@ def compact_memory(
 
             summary_text = summarize(body)
             if prev:
-                # Iterative update: preserve + add (Pi-mono / Hermes lesson)
                 summary_text = (
                     "## Carried forward\n"
                     + prev.replace("[context summary]\n", "").strip()[:800]
