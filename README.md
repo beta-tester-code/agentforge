@@ -16,71 +16,92 @@ It is an engineering-focused toolkit designed to make agents cheaper to run and 
 
 ## Status
 
-**Early development / MVP phase**
+**Early development (v0.1.0)**
 
-Current goal: deliver a usable core by the end of the first development weekend that demonstrates:
+Working right now:
 
-1. Step-by-step agent execution
-2. Basic context compaction + tool-result offloading
-3. Clear per-step token tracking
-4. Inspectable state at any point
+- Agent definition
+- Memory + per-message token tracking
+- Compaction primitives (tool-result offloading)
+- Tracer / step observability
+- OpenAI-compatible LLM client
+- Runner that can call a real model when an API key is present
+
+Coming next:
+
+- Multi-step tool calling loop
+- Real summarization-based compaction
+- Better examples and docs
 
 ---
 
 ## Design Principles
 
-1. **Measure everything that costs tokens**  
-   Every decision that touches the context window must be visible and countable.
-
-2. **Prefer reversible operations**  
-   Offload before you destroy. Summarize only when recovery is no longer needed.
-
-3. **Keep the recent tail lossless**  
-   The last N turns stay intact. Older content is compacted or moved out.
-
-4. **Minimal surface area**  
-   Small core. Clear extension points. No heavy framework tax.
-
-5. **Open by default**  
-   Core is fully open source. Hosted/paid layers only appear after proven value.
+1. **Measure everything that costs tokens**
+2. **Prefer reversible operations** (offload before destroy)
+3. **Keep the recent tail lossless**
+4. **Minimal surface area**
+5. **Open by default**
 
 ---
 
-## Planned MVP Scope
+## Quick Start
 
-- Define an agent (goal + system prompt + tools)
-- Execute step-by-step with explicit state
-- Simple memory with compaction triggers
-- Tool-result offloading (store large outputs externally, keep pointer + preview)
-- Per-step token accounting
-- CLI entry point + one clear example
-- Clean documentation
+```bash
+# clone
+git clone https://github.com/beta-tester-code/agentforge.git
+cd agentforge
 
-Out of scope for MVP:
-- Complex multi-agent orchestration
-- Fancy UI
-- Authentication / multi-tenant
-- Payment systems
+# install (editable)
+pip install -e .
+
+# skeleton mode (no key needed)
+python examples/basic_agent.py
+
+# real model
+export OPENAI_API_KEY=sk-...
+python examples/basic_agent.py
+```
+
+You can also point to any OpenAI-compatible endpoint:
+
+```python
+from agentforge import Agent, Runner, make_llm_call
+
+llm = make_llm_call(
+    base_url="https://api.groq.com/openai/v1",
+    model="llama-3.3-70b-versatile",
+)
+
+agent = Agent(
+    name="demo",
+    goal="Be helpful and concise",
+    system_prompt="You are a careful assistant.",
+)
+
+runner = Runner(agent, llm_call=llm)
+print(runner.run("Hello"))
+print(runner.get_trace_summary())
+```
 
 ---
 
-## Project Structure (target)
+## Project Structure
 
 ```text
-agentforge/
-├── README.md
-├── pyproject.toml
-├── .gitignore
-├── src/
-│   └── agentforge/
-│       ├── __init__.py
-│       ├── agent.py
-│       ├── memory.py
-│       ├── tools.py
-│       ├── runner.py
-│       ├── observability.py
-│       └── compaction.py
-├── examples/
-│   └── basic_agent.py
-├── tests/
-└── docs/
+src/agentforge/
+├── agent.py
+├── memory.py
+├── observability.py
+├── runner.py
+├── compaction.py
+├── tokens.py
+├── tools.py
+└── llm.py
+```
+
+---
+
+## License
+
+MIT (planned)

@@ -2,6 +2,7 @@
 
 from agentforge.agent import Agent
 from agentforge.compaction import CompactionConfig, compact_memory
+from agentforge.llm import LLMError, OpenAICompatibleClient, make_llm_call
 from agentforge.memory import Memory, Message
 from agentforge.observability import Tracer
 from agentforge.runner import Runner
@@ -21,5 +22,8 @@ __all__ = [
     "Tool",
     "ToolRegistry",
     "get_token_counter",
+    "OpenAICompatibleClient",
+    "make_llm_call",
+    "LLMError",
     "__version__",
 ]

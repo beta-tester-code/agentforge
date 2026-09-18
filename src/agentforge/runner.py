@@ -1,4 +1,4 @@
-"""Agent runner with token tracking and compaction hooks."""
+"""Agent runner with token tracking, compaction and optional LLM."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from agentforge.tokens import get_token_counter
 
 
 class Runner:
-    """Executes an agent step by step with basic observability and compaction."""
+    """Executes an agent step by step with observability and compaction."""
 
     def __init__(
         self,
@@ -20,8 +20,8 @@ class Runner:
         *,
         compaction_config: CompactionConfig | None = None,
         token_counter: Callable[[str], int] | None = None,
-        llm_call: Callable[..., str] | None = None,
-        model_name: str = "gpt-4o",
+        llm_call: Callable[[list[dict[str, str]]], str] | None = None,
+        model_name: str = "gpt-4o-mini",
     ):
         self.agent = agent
         self.memory = Memory()
@@ -29,7 +29,7 @@ class Runner:
         self.step = 0
         self.compaction_config = compaction_config or CompactionConfig()
         self.token_counter = token_counter or get_token_counter(model_name)
-        self.llm_call = llm_call  # optional: (messages: list[dict]) -> str
+        self.llm_call = llm_call
 
     def _count(self, text: str) -> int:
         return self.token_counter(text)
@@ -39,7 +39,7 @@ class Runner:
             self.memory,
             self.compaction_config,
             token_counter=self.token_counter,
-            summarizer=None,  # real LLM summarizer comes later
+            summarizer=None,
         )
         if result.actions:
             self.tracer.record(
@@ -53,13 +53,9 @@ class Runner:
             )
 
     def run(self, user_input: str, max_steps: int = 8) -> str:
-        """Run the agent for up to max_steps.
+        """Run one turn (user -> assistant).
 
-        Current behaviour:
-        - Records user input with token count
-        - Optionally calls an injected llm_call
-        - Applies compaction if over threshold
-        - Returns the final assistant reply
+        Multi-step tool loops will be added next.
         """
         user_tokens = self._count(user_input)
         self.memory.add("user", user_input, tokens=user_tokens)
@@ -71,16 +67,19 @@ class Runner:
             system = f"{system}\n\nGoal: {self.agent.goal}"
 
         if self.llm_call is not None:
-            messages_for_llm = [{"role": "system", "content": system}]
+            messages_for_llm: list[dict[str, str]] = [
+                {"role": "system", "content": system}
+            ]
             for m in self.memory.messages:
-                messages_for_llm.append({"role": m.role, "content": m.content})
+                role = m.role if m.role in ("user", "assistant", "system") else "user"
+                messages_for_llm.append({"role": role, "content": m.content})
 
             reply = self.llm_call(messages_for_llm)
             reply_tokens = self._count(reply)
         else:
             reply = (
                 f"[AgentForge] Received: {user_input!r}. "
-                f"LLM not wired yet — this is the skeleton response."
+                f"No llm_call provided — skeleton response."
             )
             reply_tokens = self._count(reply)
 
@@ -93,7 +92,6 @@ class Runner:
         self.step += 1
 
         self._maybe_compact()
-
         return reply
 
     def get_trace_summary(self) -> dict[str, Any]:
