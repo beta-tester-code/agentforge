@@ -19,7 +19,7 @@ from agentforge.tools import ToolRegistry
 
 
 TOOL_CALL_RE = re.compile(
-    r"TOOL_CALL\s*\n\s*name:\s*(?P<name>\S+)\s*\n\s*args:\s*(?P<args>\{.*?\})\s*\n\s*END_TOOL_CALL",
+    r"TOOL_CALL\s*\n\s*name:\s*(?P<name>\S+)\s*\n\s*args:\s*(?P<args>\{.*\})\s*\n\s*END_TOOL_CALL",
     re.DOTALL | re.IGNORECASE,
 )
 
@@ -35,7 +35,18 @@ def _parse_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
         if not isinstance(args, dict):
             args = {}
     except json.JSONDecodeError:
-        args = {}
+        # Best-effort: try to find the first JSON object
+        start = raw_args.find("{")
+        end = raw_args.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                args = json.loads(raw_args[start : end + 1])
+                if not isinstance(args, dict):
+                    args = {}
+            except json.JSONDecodeError:
+                args = {}
+        else:
+            args = {}
     return name, args
 
 

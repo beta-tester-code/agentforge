@@ -1,7 +1,6 @@
 """Basic tests for memory and compaction."""
 
 from agentforge import Memory, CompactionConfig, compact_memory
-from agentforge.memory import Message
 
 
 def test_memory_add_and_recent():
@@ -22,7 +21,7 @@ def test_offload_large_tool_result():
         max_tokens=10_000,
         max_tool_result_chars=100,
         keep_recent_messages=2,
-        summarize_threshold_ratio=0.99,  # avoid summarization in this test
+        summarize_threshold_ratio=0.99,
     )
     result = compact_memory(mem, config)
 
@@ -47,3 +46,21 @@ def test_summarize_when_over_threshold():
     assert result.messages_after < result.messages_before
     assert any("summarized" in a for a in result.actions)
     assert mem.messages[0].meta.get("type") == "compaction_summary"
+
+
+def test_default_summarizer_saves_tokens():
+    mem = Memory()
+    for i in range(20):
+        mem.add("user", f"Long user content {i} " + ("word " * 40), tokens=None)
+        mem.add("assistant", f"Long assistant content {i} " + ("text " * 40), tokens=None)
+
+    config = CompactionConfig(
+        max_tokens=200,
+        keep_recent_messages=2,
+        summarize_threshold_ratio=0.3,
+        offload_tool_results=False,
+    )
+    result = compact_memory(mem, config)
+    assert result.tokens_after < result.tokens_before
+    # Expect meaningful reduction with the aggressive default summarizer
+    assert result.tokens_after < result.tokens_before * 0.5

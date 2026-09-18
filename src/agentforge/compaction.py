@@ -75,15 +75,22 @@ def offload_large_tool_results(
 
 
 def default_summarizer(messages: list[Message]) -> str:
-    """Cheap extractive fallback when no LLM summarizer is provided."""
-    lines = []
+    """Aggressive extractive fallback when no LLM summarizer is provided.
+
+    Keeps only a tight bullet list of role + truncated content.
+    Previous version was too verbose and barely saved tokens.
+    """
+    lines: list[str] = []
     for m in messages:
-        role = m.role
-        content = m.content.replace("\n", " ").strip()
-        if len(content) > 180:
-            content = content[:177] + "..."
-        lines.append(f"- [{role}] {content}")
-    return "Summary of earlier context:\n" + "\n".join(lines)
+        content = " ".join(m.content.split())
+        if len(content) > 80:
+            content = content[:77] + "..."
+        lines.append(f"{m.role}:{content}")
+    # Cap total summary size hard
+    text = " | ".join(lines)
+    if len(text) > 1200:
+        text = text[:1197] + "..."
+    return "Earlier context (compressed): " + text
 
 
 def compact_memory(
@@ -116,10 +123,7 @@ def compact_memory(
     tokens_now = total_message_tokens(memory.messages)
     threshold = int(config.max_tokens * config.summarize_threshold_ratio)
 
-    if (
-        tokens_now > threshold
-        and len(memory.messages) > config.keep_recent_messages
-    ):
+    if tokens_now > threshold and len(memory.messages) > config.keep_recent_messages:
         keep = config.keep_recent_messages
         older = memory.messages[:-keep]
         recent = memory.messages[-keep:]
@@ -155,6 +159,9 @@ def make_llm_summarizer(
         for m in messages:
             transcript.append(f"{m.role.upper()}: {m.content}")
         body = "\n".join(transcript)
+        # Bound prompt size for the summarizer itself
+        if len(body) > 12_000:
+            body = body[:12_000] + "\n...[truncated for summarizer]"
 
         prompt = [
             {
