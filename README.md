@@ -2,10 +2,10 @@
 
 **Open-source toolkit for building reliable, token-efficient AI agents.**
 
-AgentForge focuses on the hard problems that still break most agent systems in production:
+Focus:
 
 - Extreme **token efficiency**
-- Strong **context control** (reduce drift and context rot)
+- Strong **context control** (less drift / context rot)
 - Lightweight **observability**
 - Minimal runtime overhead
 
@@ -25,53 +25,69 @@ Not another heavy framework. A small, measurable toolkit.
 | Tool-result offloading | ✅ |
 | LLM summarization compaction | ✅ |
 | OpenAI-compatible LLM client | ✅ |
+| CLI (`agentforge run`) | ✅ |
 | Basic tests | ✅ |
 
 ---
 
-## Quick Start
+## Install
 
 ```bash
 git clone https://github.com/beta-tester-code/agentforge.git
 cd agentforge
 pip install -e ".[dev]"
+```
+
+---
+
+## Quick Start
+
+### Python
+
+```bash
+python examples/basic_agent.py
+python examples/with_tools.py
+
+export OPENAI_API_KEY=sk-...
+python examples/with_tools.py
+```
+
+### CLI
+
+```bash
+agentforge --version
 
 # skeleton (no key)
-python examples/basic_agent.py
-
-# with tools
-python examples/with_tools.py
+agentforge run -p "Hello"
 
 # real model
 export OPENAI_API_KEY=sk-...
-python examples/with_tools.py
+agentforge run -p "What is context rot?" --trace
 
-# tests
-pytest -q
+# other OpenAI-compatible providers
+agentforge run -p "Hi" --base-url https://api.groq.com/openai/v1 -m llama-3.3-70b-versatile
 ```
 
-Any OpenAI-compatible endpoint works:
+### Library
 
 ```python
 from agentforge import Agent, Runner, make_llm_call, ToolRegistry
 
-llm = make_llm_call(
-    base_url="https://api.groq.com/openai/v1",
-    model="llama-3.3-70b-versatile",
-)
-
-tools = ToolRegistry()
-# tools.register("name", "description", func)
-
+llm = make_llm_call(model="gpt-4o-mini")
 agent = Agent(
     name="demo",
     goal="Be helpful and concise",
     system_prompt="You are a careful assistant.",
 )
-
-runner = Runner(agent, tools=tools, llm_call=llm)
+runner = Runner(agent, llm_call=llm)
 print(runner.run("Hello"))
 print(runner.get_trace_summary())
+```
+
+### Tests
+
+```bash
+pytest -q
 ```
 
 ---
@@ -97,7 +113,8 @@ src/agentforge/
 ├── compaction.py
 ├── tokens.py
 ├── tools.py
-└── llm.py
+├── llm.py
+└── cli.py
 ```
 
 ---
