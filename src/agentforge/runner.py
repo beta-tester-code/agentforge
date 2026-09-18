@@ -18,13 +18,11 @@ from agentforge.tokens import get_token_counter
 from agentforge.tools import ToolRegistry
 
 
-# Primary format
 TOOL_CALL_RE = re.compile(
     r"TOOL_CALL\s*\n\s*name:\s*(?P<name>\S+)\s*\n\s*args:\s*(?P<args>\{.*\})\s*\n\s*END_TOOL_CALL",
     re.DOTALL | re.IGNORECASE,
 )
 
-# Fallback: fenced JSON {"name": "...", "args": {...}}
 TOOL_JSON_RE = re.compile(
     r"```(?:json)?\s*(\{\s*\"name\"\s*:.*?\})\s*```",
     re.DOTALL | re.IGNORECASE,
@@ -36,8 +34,7 @@ def _parse_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
     if m:
         name = m.group("name").strip()
         raw_args = m.group("args").strip()
-        args = _loads_obj(raw_args)
-        return name, args
+        return name, _loads_obj(raw_args)
 
     m2 = TOOL_JSON_RE.search(text)
     if m2:
@@ -50,7 +47,6 @@ def _parse_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
             if not isinstance(args, dict):
                 args = {}
             return str(obj["name"]), args
-
     return None
 
 
@@ -84,6 +80,8 @@ class Runner:
         model_name: str = "gpt-4o-mini",
         use_llm_summarizer: bool = True,
         reanchor_goal: bool = True,
+        enable_offload_recall: bool = True,
+        tool_schema_max_chars: int = 2_500,
     ):
         self.agent = agent
         self.tools = tools or ToolRegistry()
@@ -94,6 +92,7 @@ class Runner:
         self.token_counter = token_counter or get_token_counter(model_name)
         self.llm_call = llm_call
         self.reanchor_goal = reanchor_goal
+        self.tool_schema_max_chars = tool_schema_max_chars
         self._system_prompt_cache: str | None = None
 
         self._summarizer: Callable | None = None
@@ -103,6 +102,20 @@ class Runner:
         for name, func in agent.tools.items():
             if self.tools.get(name) is None:
                 self.tools.register(name, description=f"Tool '{name}'", func=func)
+
+        if enable_offload_recall and self.tools.get("recall_offload") is None:
+
+            def recall_offload(key: str) -> str:
+                store = self.memory.state.get("_offload_store") or {}
+                if key not in store:
+                    return f"Error: unknown offload key {key!r}"
+                return store[key]
+
+            self.tools.register(
+                "recall_offload",
+                'Retrieve full offloaded tool content. args: {"key": "tool_result_..."}',
+                recall_offload,
+            )
 
     def _count(self, text: str) -> int:
         return self.token_counter(text)
@@ -115,7 +128,7 @@ class Runner:
         if self.agent.goal:
             parts.append(f"Goal: {self.agent.goal}")
 
-        tool_desc = self.tools.descriptions()
+        tool_desc = self.tools.descriptions(max_chars=self.tool_schema_max_chars)
         if tool_desc and tool_desc != "(no tools registered)":
             parts.append(
                 "You can call tools using this exact format:\n"
@@ -127,11 +140,14 @@ class Runner:
                 '```json\n{"name": "<tool_name>", "args": {"key": "value"}}\n```\n\n'
                 "Available tools:\n"
                 f"{tool_desc}\n\n"
-                "After receiving a tool result, continue reasoning. "
-                "When you have the final answer, reply normally without a tool call."
+                "After a tool result, continue reasoning. "
+                "Final answers must not include a tool call."
             )
         self._system_prompt_cache = "\n\n".join(parts)
         return self._system_prompt_cache
+
+    def invalidate_prompt_cache(self) -> None:
+        self._system_prompt_cache = None
 
     def _maybe_compact(self) -> None:
         before_len = len(self.memory.messages)
@@ -151,7 +167,6 @@ class Runner:
                 messages_before=result.messages_before,
                 messages_after=result.messages_after,
             )
-            # Re-anchor goal after destructive compaction to fight drift
             if (
                 self.reanchor_goal
                 and self.agent.goal
@@ -187,15 +202,13 @@ class Runner:
         if tool is None:
             return f"Error: unknown tool '{name}'"
         try:
-            result = tool.func(**args)
-            return str(result)
+            return str(tool.func(**args))
         except TypeError as e:
             return f"Error executing tool '{name}' (bad args): {e}"
         except Exception as e:
             return f"Error executing tool '{name}': {e}"
 
     def run(self, user_input: str, max_steps: int = 8) -> str:
-        """Run the agent until it produces a final answer or hits max_steps."""
         user_tokens = self._count(user_input)
         self.memory.add("user", user_input, tokens=user_tokens)
         self.tracer.record(self.step, "user_input", input_tokens=user_tokens)
@@ -267,5 +280,4 @@ class Runner:
         return self.tracer.summary()
 
     def get_trace(self) -> list[dict[str, Any]]:
-        """Full per-step trace (foundation for hosted observability)."""
         return self.tracer.steps()

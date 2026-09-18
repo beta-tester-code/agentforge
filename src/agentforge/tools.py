@@ -31,9 +31,30 @@ class ToolRegistry:
     def list(self) -> list[Tool]:
         return list(self._tools.values())
 
-    def descriptions(self) -> str:
-        """Return a compact text description of all tools (for prompts)."""
-        lines = []
+    def names(self) -> list[str]:
+        return list(self._tools.keys())
+
+    def descriptions(self, max_chars: int | None = None) -> str:
+        """Compact text description of tools (for prompts).
+
+        If max_chars is set, truncate the block and note omitted tools.
+        GitHub reported multi-KB schema tax from unused tools — we bound it.
+        """
+        if not self._tools:
+            return "(no tools registered)"
+
+        lines: list[str] = []
+        omitted = 0
+        used = 0
         for t in self._tools.values():
-            lines.append(f"- {t.name}: {t.description}")
-        return "\n".join(lines) if lines else "(no tools registered)"
+            line = f"- {t.name}: {t.description}"
+            if max_chars is not None and used + len(line) + 1 > max_chars and lines:
+                omitted += 1
+                continue
+            lines.append(line)
+            used += len(line) + 1
+
+        text = "\n".join(lines)
+        if omitted:
+            text += f"\n- … +{omitted} tools omitted (schema budget); call by exact name if known"
+        return text
