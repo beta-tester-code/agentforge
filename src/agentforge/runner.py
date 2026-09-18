@@ -18,36 +18,56 @@ from agentforge.tokens import get_token_counter
 from agentforge.tools import ToolRegistry
 
 
+# Primary format
 TOOL_CALL_RE = re.compile(
     r"TOOL_CALL\s*\n\s*name:\s*(?P<name>\S+)\s*\n\s*args:\s*(?P<args>\{.*\})\s*\n\s*END_TOOL_CALL",
+    re.DOTALL | re.IGNORECASE,
+)
+
+# Fallback: fenced JSON {"name": "...", "args": {...}}
+TOOL_JSON_RE = re.compile(
+    r"```(?:json)?\s*(\{\s*\"name\"\s*:.*?\})\s*```",
     re.DOTALL | re.IGNORECASE,
 )
 
 
 def _parse_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
     m = TOOL_CALL_RE.search(text)
-    if not m:
-        return None
-    name = m.group("name").strip()
-    raw_args = m.group("args").strip()
+    if m:
+        name = m.group("name").strip()
+        raw_args = m.group("args").strip()
+        args = _loads_obj(raw_args)
+        return name, args
+
+    m2 = TOOL_JSON_RE.search(text)
+    if m2:
+        try:
+            obj = json.loads(m2.group(1))
+        except json.JSONDecodeError:
+            return None
+        if isinstance(obj, dict) and "name" in obj:
+            args = obj.get("args") or obj.get("arguments") or {}
+            if not isinstance(args, dict):
+                args = {}
+            return str(obj["name"]), args
+
+    return None
+
+
+def _loads_obj(raw: str) -> dict[str, Any]:
     try:
-        args = json.loads(raw_args)
-        if not isinstance(args, dict):
-            args = {}
+        args = json.loads(raw)
+        return args if isinstance(args, dict) else {}
     except json.JSONDecodeError:
-        # Best-effort: try to find the first JSON object
-        start = raw_args.find("{")
-        end = raw_args.rfind("}")
+        start = raw.find("{")
+        end = raw.rfind("}")
         if start >= 0 and end > start:
             try:
-                args = json.loads(raw_args[start : end + 1])
-                if not isinstance(args, dict):
-                    args = {}
+                args = json.loads(raw[start : end + 1])
+                return args if isinstance(args, dict) else {}
             except json.JSONDecodeError:
-                args = {}
-        else:
-            args = {}
-    return name, args
+                return {}
+        return {}
 
 
 class Runner:
@@ -63,6 +83,7 @@ class Runner:
         llm_call: Callable[[list[dict[str, str]]], str] | None = None,
         model_name: str = "gpt-4o-mini",
         use_llm_summarizer: bool = True,
+        reanchor_goal: bool = True,
     ):
         self.agent = agent
         self.tools = tools or ToolRegistry()
@@ -72,6 +93,8 @@ class Runner:
         self.compaction_config = compaction_config or CompactionConfig()
         self.token_counter = token_counter or get_token_counter(model_name)
         self.llm_call = llm_call
+        self.reanchor_goal = reanchor_goal
+        self._system_prompt_cache: str | None = None
 
         self._summarizer: Callable | None = None
         if use_llm_summarizer and llm_call is not None:
@@ -85,6 +108,9 @@ class Runner:
         return self.token_counter(text)
 
     def _system_prompt(self) -> str:
+        if self._system_prompt_cache is not None:
+            return self._system_prompt_cache
+
         parts = [self.agent.system_prompt]
         if self.agent.goal:
             parts.append(f"Goal: {self.agent.goal}")
@@ -97,14 +123,18 @@ class Runner:
                 "name: <tool_name>\n"
                 "args: {\"key\": \"value\"}\n"
                 "END_TOOL_CALL\n\n"
+                "Alternatively, a single fenced JSON block:\n"
+                '```json\n{"name": "<tool_name>", "args": {"key": "value"}}\n```\n\n'
                 "Available tools:\n"
                 f"{tool_desc}\n\n"
                 "After receiving a tool result, continue reasoning. "
-                "When you have the final answer, reply normally without TOOL_CALL."
+                "When you have the final answer, reply normally without a tool call."
             )
-        return "\n\n".join(parts)
+        self._system_prompt_cache = "\n\n".join(parts)
+        return self._system_prompt_cache
 
     def _maybe_compact(self) -> None:
+        before_len = len(self.memory.messages)
         result = compact_memory(
             self.memory,
             self.compaction_config,
@@ -121,6 +151,19 @@ class Runner:
                 messages_before=result.messages_before,
                 messages_after=result.messages_after,
             )
+            # Re-anchor goal after destructive compaction to fight drift
+            if (
+                self.reanchor_goal
+                and self.agent.goal
+                and result.messages_after < before_len
+            ):
+                anchor = f"[goal reminder] {self.agent.goal}"
+                self.memory.add(
+                    "system",
+                    anchor,
+                    tokens=self._count(anchor),
+                    type="goal_reanchor",
+                )
 
     def _build_messages(self) -> list[dict[str, str]]:
         messages: list[dict[str, str]] = [
@@ -136,6 +179,9 @@ class Runner:
             messages.append({"role": role, "content": content})
         return messages
 
+    def _estimate_prompt_tokens(self, messages: list[dict[str, str]]) -> int:
+        return sum(self._count(m.get("content", "")) for m in messages)
+
     def _execute_tool(self, name: str, args: dict[str, Any]) -> str:
         tool = self.tools.get(name)
         if tool is None:
@@ -143,6 +189,8 @@ class Runner:
         try:
             result = tool.func(**args)
             return str(result)
+        except TypeError as e:
+            return f"Error executing tool '{name}' (bad args): {e}"
         except Exception as e:
             return f"Error executing tool '{name}': {e}"
 
@@ -168,6 +216,7 @@ class Runner:
                 break
 
             messages = self._build_messages()
+            prompt_tokens = self._estimate_prompt_tokens(messages)
             reply = self.llm_call(messages)
             reply_tokens = self._count(reply)
 
@@ -177,6 +226,7 @@ class Runner:
                 self.tracer.record(
                     self.step,
                     "assistant_reply",
+                    input_tokens=prompt_tokens,
                     output_tokens=reply_tokens,
                 )
                 self.step += 1
@@ -188,6 +238,7 @@ class Runner:
             self.tracer.record(
                 self.step,
                 "tool_call",
+                input_tokens=prompt_tokens,
                 output_tokens=reply_tokens,
                 tool=tool_name,
                 args=tool_args,
@@ -214,3 +265,7 @@ class Runner:
 
     def get_trace_summary(self) -> dict[str, Any]:
         return self.tracer.summary()
+
+    def get_trace(self) -> list[dict[str, Any]]:
+        """Full per-step trace (foundation for hosted observability)."""
+        return self.tracer.steps()

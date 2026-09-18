@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -46,9 +46,21 @@ class Tracer:
 
     def summary(self) -> dict[str, Any]:
         inp, out = self.total_tokens()
+        by_action: dict[str, int] = {}
+        for r in self.records:
+            by_action[r.action] = by_action.get(r.action, 0) + 1
         return {
             "steps": len(self.records),
             "input_tokens": inp,
             "output_tokens": out,
             "total_tokens": inp + out,
+            "by_action": by_action,
         }
+
+    def steps(self) -> list[dict[str, Any]]:
+        """Full step list for debugging / future hosted traces."""
+        out: list[dict[str, Any]] = []
+        for r in self.records:
+            item = asdict(r)
+            out.append(item)
+        return out

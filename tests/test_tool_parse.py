@@ -33,5 +33,20 @@ END_TOOL_CALL
     assert args["query"] == "agent frameworks"
 
 
+def test_parse_fenced_json_tool_call():
+    text = """
+I'll use a tool.
+
+```json
+{"name": "add", "args": {"a": 1, "b": 2}}
+```
+"""
+    parsed = _parse_tool_call(text)
+    assert parsed is not None
+    name, args = parsed
+    assert name == "add"
+    assert args == {"a": 1, "b": 2}
+
+
 def test_parse_no_tool_call():
     assert _parse_tool_call("Just a normal answer.") is None
