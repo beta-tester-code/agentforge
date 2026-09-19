@@ -1,40 +1,19 @@
-# AgentForge (beta-tester-code)
+# agentforge
 
-**Python toolkit for token-efficient, observable agents — compaction first, framework last.**
+Small Python library for agent loops that spend fewer tokens and stay debuggable.
 
-This is *not* DataBassGit/AgentForge, agentforge.dev, Agentman, or the ICP protocol.
-This repo: [github.com/beta-tester-code/agentforge](https://github.com/beta-tester-code/agentforge)
+If you've shipped something on LangGraph or CrewAI and watched the context window fill with tool dumps and repeated system prompts, this is aimed at that problem. It is not another orchestration framework.
 
-Focus:
+## What it does
 
-- Measure every token that hits the model
-- Offload fat tool results before they rot the window
-- Summarize only after the recent tail is kept lossless
-- Emit a compact run trace (local now; hosted later)
+- Counts tokens per step
+- Offloads large tool results (with a `recall_offload` tool to pull them back)
+- Compacts older history with an iterative summary so the second pass does not erase the first
+- Keeps a recent tail by token budget, not a fixed message count
+- Caps how much tool schema gets injected every turn
+- Returns a `RunResult` with a full step trace
 
-Not a second LangGraph. A small runtime you can drop next to an existing loop when **CrewAI/LangGraph token bills** and **context rot** become the problem.
-
-See [docs/WHY.md](docs/WHY.md) for the market argument.
-
----
-
-## Status
-
-**v0.1.1 — usable MVP** · created 2026-09-17 · **0 stars / 0 paying customers** (honest).
-
-| Feature | Status |
-|---------|--------|
-| Agent + Memory + Tracer | ✅ |
-| Token counting (tiktoken) | ✅ |
-| Tool registry + multi-step tool loop | ✅ |
-| Tool-result offloading + iterative summarization | ✅ |
-| OpenAI-compatible client (OpenAI / Groq / Gemini / …) | ✅ |
-| CLI with provider presets | ✅ |
-| Mock + optional live tests | ✅ |
-| Hosted traces | planned (paid) |
-| PyPI publish | not yet |
-
----
+Requires Python 3.11+.
 
 ## Install
 
@@ -48,83 +27,59 @@ pip install -e ".[dev]"
 PYTHONPATH=src pytest -q
 ```
 
----
+## Quick start
 
-## Quick Start
-
-### Skeleton (no key)
+No API key (skeleton mode):
 
 ```bash
 PYTHONPATH=src python examples/basic_agent.py
 PYTHONPATH=src python -m agentforge.cli run -p "Hello"
 ```
 
-### Gemini (Google AI Studio)
+With Gemini:
 
 ```bash
 export OPENAI_API_KEY=your-key
-PYTHONPATH=src python -m agentforge.cli run --provider gemini -p "What is context rot?" --trace
+PYTHONPATH=src python -m agentforge.cli run --provider gemini -p "Summarize context rot" --trace
 ```
 
-### Groq
-
-```bash
-export OPENAI_API_KEY=your-groq-key
-PYTHONPATH=src python -m agentforge.cli run --provider groq -p "Hi" --trace
-```
-
-### Library
+In code:
 
 ```python
-from agentforge import Agent, Runner, make_llm_call, ToolRegistry
+from agentforge import Agent, Runner, make_llm_call
 
 llm = make_llm_call(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
     model="gemini-3.5-flash",
 )
-agent = Agent(name="demo", goal="Be helpful", system_prompt="Be careful and concise.")
+agent = Agent(
+    name="demo",
+    goal="Answer briefly",
+    system_prompt="Be direct. Prefer tools when the question needs them.",
+)
 runner = Runner(agent, llm_call=llm)
 print(runner.run("Hello"))
-print(runner.get_trace_summary())
+print(runner.last_result)  # tokens, tool_calls, stopped_reason, ...
 ```
 
-### Compaction bench (offline)
+Offline compaction check:
 
 ```bash
 PYTHONPATH=src python scripts/bench_compaction.py
+PYTHONPATH=src python examples/token_savings_demo.py
 ```
 
-See [docs/TESTING.md](docs/TESTING.md).
+More detail: [docs/TESTING.md](docs/TESTING.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
----
+## Paid help
 
-## Design partners (paid, this week)
+If you already have a multi-step agent in production and token cost or context drift is the bottleneck, I take a limited number of fixed-scope audits.
 
-If production agents are burning tokens and you want a focused audit / setup:
+Details and pricing: [DESIGN_PARTNER.md](DESIGN_PARTNER.md).
 
-→ **[DESIGN_PARTNER.md](DESIGN_PARTNER.md)**  
-→ [Open a Design Partner issue](https://github.com/beta-tester-code/agentforge/issues/new?template=design_partner.md) (label `design-partner`)
+## Name collision
 
-| Package | Price | After you apply |
-|---------|-------|-----------------|
-| Audit only | USD 150 | Reply in 1 business day; invoice / Stripe link; work after pay |
-| Audit + setup | USD 400 | Same |
-
-Opening an issue is the application, not a charge. Email fallback: `eron6237@gmail.com`.
-
-**Later:** hosted traces / team observability on the open-source core.
-
----
-
-## Design Principles
-
-1. Measure everything that costs tokens
-2. Prefer reversible operations (offload before destroy)
-3. Keep the recent tail lossless
-4. Minimal surface area
-5. Open by default — do not claim traction we do not have
-
----
+Several unrelated projects use "AgentForge". This one is only the Python package in this repo (token/context tooling). Apache-2.0.
 
 ## License
 

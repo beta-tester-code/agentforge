@@ -1,31 +1,11 @@
-# Distribution notes
+# Notes for publishing
 
-## Organic X
+Primary surface is the GitHub repo and, when ready, PyPI.
 
-Grok currently has **X Ads** tools on this account, not organic timeline posting.
+Suggested one-liner for profile/site links:
 
-- `x_ads_create_tweet` defaults to **nullcast** (promoted-only, not on public timeline).
-- Ad account list may be empty until Ads is fully enabled on the X side.
-- Until organic post API is available, publish manually from `@tokencraft_dev` (or chosen handle).
-
-### Post draft (copy/paste)
-
-```
-AgentForge v0.1.1 (Python, MIT) — token-efficient agents.
-
-• per-step traces
-• reversible tool offload + recall_offload
-• iterative summaries (2nd compact keeps the 1st)
-• token-budget recent tail
-• tool-schema budget (kill unused-tool tax)
-
-Bench (tool-heavy): ~95% context cut on that workload
-Repo: https://github.com/beta-tester-code/agentforge
-
-Design partners: $150 audit · $400 setup
-Issue title: [design-partner]
+```text
+agentforge — Python helpers for cheaper, inspectable agent context
 ```
 
-## GitHub
-
-Primary channel for technical users. Keep README honest; no fake stars.
+Avoid claiming stars, customers, or benchmarks you have not measured on your own workloads. The offline scripts under `scripts/` and `examples/` are the reproducible checks.

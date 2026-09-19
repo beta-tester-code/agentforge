@@ -2,20 +2,19 @@
 
 ## 0.2.0
 
-- `RunResult` + `Runner.run_detailed()` / `last_result`
-- Serializable `Memory` / `Message` (`to_dict` / `from_dict`)
-- Context pressure levels (`ok` → `critical`) logged on warn+
-- Stop on consecutive tool error streak (`max_tool_errors`)
-- `Runner.reset()` for clean multi-run sessions
-- GitHub Actions CI (3.11 / 3.12)
-- `docs/ARCHITECTURE.md`
+- `RunResult`, `run_detailed()`, `last_result`
+- Memory/Message serialization
+- Context pressure markers
+- Stop after repeated tool errors
+- `Runner.reset()`
+- CI on 3.11 and 3.12
 
 ## 0.1.1
 
-- Tool schema budget, selective tools demo
-- LLM client `tools` payload helper
-- Apache-2.0 license
+- Tool description budget
+- Optional OpenAI-style tools helper on the HTTP client
+- Apache-2.0
 
 ## 0.1.0
 
-- Initial MVP: agent loop, compaction, offload, CLI, tests
+- First usable loop: tools, compaction, offload, CLI, tests

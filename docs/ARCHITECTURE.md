@@ -1,43 +1,20 @@
 # Architecture
 
-AgentForge is a **small agent runtime**, not an orchestration framework.
-
 ```
-User input
-   │
-   ▼
-┌──────────┐     ┌─────────────┐     ┌──────────┐
-│  Runner  │────▶│  LLM call   │────▶│  parse   │
-│  loop    │◀────│  (any API)  │     │ tool call│
-└────┬─────┘     └─────────────┘     └────┬─────┘
-     │                                    │
-     │         ┌──────────────┐           │
-     ├────────▶│ ToolRegistry │◀──────────┘
-     │         └──────────────┘
-     │
-     ▼
-┌──────────────┐    threshold / pressure
-│   Memory     │──────────────────────────▶ Compaction
-│ messages+    │   offload → summarize     (iterative)
-│ offload store│   token-budget tail
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│    Tracer    │──▶ RunResult (reply + metrics + steps)
-└──────────────┘
+input → Runner → LLM → tool parse?
+                ↘ tools → memory
+memory → (pressure) → offload / compact → next turn
+                     → Tracer → RunResult
 ```
 
-## Design contracts
+**Runner** owns the step loop, prompt assembly, and stop conditions (max steps, tool error streak, normal completion).
 
-1. **Measure** — every user/tool/assistant turn records tokens when possible.
-2. **Reversible first** — large tool results are offloaded with `recall_offload`, not deleted.
-3. **Iterative summary** — second compaction carries forward the first summary.
-4. **Tail policy** — protect recent context by **token budget**, fall back to message count.
-5. **Schema budget** — tool descriptions are capped so unused tools cannot tax every turn.
-6. **Observable** — `RunResult` + full step trace are the foundation for hosted traces later.
+**Memory** holds messages plus an offload store for large tool bodies. Serializable via `to_dict` / `from_dict`.
 
-## What we intentionally skip (for now)
+**Compaction** runs offload first, then iterative summarization when over threshold. Recent tail is chosen by token budget, with a message-count fallback so small chats still compact when needed.
 
-- Multi-agent graphs / supervisor topologies
-- Built-in vector store
-- Provider-specific SDKs as hard deps (OpenAI-compatible HTTP only)
+**Tracer** records per-step actions. **RunResult** is the public snapshot after `run_detailed`.
+
+**ToolRegistry** can cap description length so a long tool list does not dominate every prompt.
+
+Dependencies stay thin: httpx, pydantic, tiktoken. Any OpenAI-compatible chat endpoint works through `make_llm_call`.

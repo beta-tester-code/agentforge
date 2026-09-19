@@ -1,52 +1,31 @@
-# AgentForge Design Partner Program
+# Fixed-scope audits
 
-Early teams that are **burning real money on agent tokens** can work with us directly.
+For teams that already run tool-using agents and want a concrete look at token use and context handling.
 
-## What you get
+## Scope
 
-1. **Token & context audit** of one existing agent workflow (LangGraph / CrewAI / custom).
-2. **AgentForge integration plan** focused on measurable token reduction and inspectable traces.
-3. **Hands-on setup session** (remote) + written notes (Audit + setup package).
-4. **Priority influence** on the hosted traces roadmap (open-source core stays free).
+**Audit (USD 150)**  
+One existing workflow (LangGraph, CrewAI, or custom). Written notes on where tokens go, what is safe to offload/compact, and a short integration plan for this library if it fits.
 
-Deliverable is written. No hosted product is sold in this window.
+**Audit + setup (USD 400)**  
+Same as above, plus one remote session to wire AgentForge into that workflow and a short follow-up writeup.
 
-## What we need from you
+Turnaround is usually a few business days after you send materials. Core library stays free either way.
 
-- One production or staging agent that runs multi-step tool calls
-- Willingness to share approximate token spend / failure modes
-- Feedback within 14 days
+## What I need from you
 
-## Pricing (design partner window)
+- A production or staging agent that does multi-step tool calls
+- Rough monthly token spend or request volume
+- The failure mode you care about (cost, drift, hard-to-debug traces)
 
-| Package | Scope | Price | Turnaround |
-|---------|--------|-------|------------|
-| **Audit only** | Written audit + recommendations | **USD 150** | ~3 business days after materials |
-| **Audit + setup** | Audit + 1 remote integration session + follow-up notes | **USD 400** | ~5 business days |
+## How to start
 
-Fixed price. No long contract. Limited slots while the project is pre-1.0.
+Open an issue with the design-partner template, or title it:
 
-## How to apply
+```text
+[design-partner] one-line description
+```
 
-1. Open a GitHub issue with the **Design Partner Application** template (label `design-partner`), or title:
+I reply on the issue. Payment is invoice or Stripe link after we confirm fit. Opening an issue does not charge anything.
 
-   ```text
-   [design-partner] short description of your agent
-   ```
-
-2. Include stack, rough monthly token spend or call volume, and the main pain (cost, drift, debugging).
-
-3. We reply on the issue within **1 business day** with accept / waitlist / not a fit.
-
-4. If accepted: invoice or Stripe Payment Link (sent on the issue or by email). Work starts after payment.
-
-Contact if GitHub issues are blocked: `eron6237@gmail.com` (same address as repo commits).
-
-Opening an issue is **not** a charge.
-
-## Roadmap honesty
-
-- **Now:** open-source toolkit (token tracking, compaction, tool loop, CLI)
-- **This week cash path:** the two packages above
-- **Next:** hosted trace viewer / team workspace (paid)
-- Design partners shape that hosted layer; they are not buying vaporware features that do not exist yet.
+Email if GitHub is awkward: eron6237@gmail.com
