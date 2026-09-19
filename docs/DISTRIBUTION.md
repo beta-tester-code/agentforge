@@ -1,11 +1,15 @@
 # Notes for publishing
 
-Primary surface is the GitHub repo and, when ready, PyPI.
+Primary surface is the GitHub repo.
 
-Suggested one-liner for profile/site links:
+**PyPI:** the name `agentforge` is already taken (DataBassGit / GPL low-code framework). Do not publish this package as `agentforge`. Import can stay `agentforge`; distribution name should be distinct, e.g. `agentforge-compact` or `tokencraft-agentforge`. Confirm availability on pypi.org before first upload. Human must create the PyPI account and token.
+
+Suggested one-liner:
 
 ```text
-agentforge — Python helpers for cheaper, inspectable agent context
+agentforge (beta-tester-code) — Python helpers for cheaper, inspectable agent context
 ```
 
-Avoid claiming stars, customers, or benchmarks you have not measured on your own workloads. The offline scripts under `scripts/` and `examples/` are the reproducible checks.
+Avoid claiming stars, customers, or third-party benchmarks. Offline checks live under `scripts/` and `examples/`.
+
+Near-term cash: [DESIGN_PARTNER.md](../DESIGN_PARTNER.md) ($150 audit / $400 audit+setup). Hosted traces later.

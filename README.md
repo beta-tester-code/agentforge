@@ -4,18 +4,25 @@ Small Python library for agent loops that spend fewer tokens and stay debuggable
 
 If you've shipped something on LangGraph or CrewAI and watched the context window fill with tool dumps and repeated system prompts, this is aimed at that problem. It is not another orchestration framework.
 
+**v0.4.0** · Apache-2.0 · **not on PyPI** (the name `agentforge` is already taken by an unrelated project). Install from git.
+
+0 stars / 0 issues / 0 paying customers. Created 2026-09-17.
+
 ## What it does
 
-- Counts tokens per step; returns a `RunResult` + step trace
+- Counts tokens per step; returns a `RunResult` + step trace (optional JSONL `TraceStore`)
 - Offloads large tool results (`recall_offload`); optional disk store via `offload_dir=`
 - Iterative summaries (second pass keeps the first) + keeps the original task message
 - Recent tail by token budget; optional prefix-cache-friendly mode (offload before summarize)
 - Text `TOOL_CALL` format and native OpenAI-style `tool_calls`
 - JSON Schema for tools inferred from type hints
 - `compact_now` tool so the model can request compaction after a subtask
+- Bound LLM+tools, subagent isolation, hard budget stop
 - Cooperative cancel via `cancel_check`; streaming helper on the HTTP client
 
 Requires Python 3.11+.
+
+Compare to LangGraph / CrewAI / Headroom / TanStack compaction: [docs/COMPARE.md](docs/COMPARE.md).
 
 ## Install
 
@@ -53,7 +60,7 @@ from agentforge import Agent, Runner, make_llm_call
 
 llm = make_llm_call(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-    model="gemini-3.5-flash",
+    model="gemini-3.6-flash",
 )
 agent = Agent(
     name="demo",
@@ -77,11 +84,11 @@ More: [docs/TESTING.md](docs/TESTING.md), [docs/ARCHITECTURE.md](docs/ARCHITECTU
 
 ## Paid help
 
-Fixed-scope audits for production token/context issues: [DESIGN_PARTNER.md](DESIGN_PARTNER.md).
+Fixed-scope audits for production token/context issues: [DESIGN_PARTNER.md](DESIGN_PARTNER.md) — $150 written audit or $400 audit+setup. Open a `[design-partner]` issue or email eron6237@gmail.com. No charge to open the issue.
 
 ## Name collision
 
-Several unrelated projects use "AgentForge". This repo is only the Python package here. Apache-2.0.
+Several unrelated projects use "AgentForge" (including PyPI `agentforge`). This repo is only the Python package here. Future wheel should use a distinct distribution name (see [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)). Apache-2.0.
 
 ## License
 
