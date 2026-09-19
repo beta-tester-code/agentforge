@@ -6,8 +6,6 @@ If you've shipped something on LangGraph or CrewAI and watched the context windo
 
 **v0.4.0** · Apache-2.0 · **not on PyPI** (the name `agentforge` is already taken by an unrelated project). Install from git.
 
-0 stars / 0 issues / 0 paying customers. Created 2026-09-17.
-
 ## What it does
 
 - Counts tokens per step; returns a `RunResult` + step trace (optional JSONL `TraceStore`)
@@ -84,7 +82,14 @@ More: [docs/TESTING.md](docs/TESTING.md), [docs/ARCHITECTURE.md](docs/ARCHITECTU
 
 ## Paid help
 
-Fixed-scope audits for production token/context issues: [DESIGN_PARTNER.md](DESIGN_PARTNER.md) — $150 written audit or $400 audit+setup. Open a `[design-partner]` issue or email eron6237@gmail.com. No charge to open the issue.
+Fixed-scope work for teams already burning tokens on tool-using agents:
+
+- **$150** written audit (token map + offload/compact plan)
+- **$400** audit + one remote setup session
+
+Deliverable shape: [docs/SAMPLE_AUDIT.md](docs/SAMPLE_AUDIT.md). Offer terms: [DESIGN_PARTNER.md](DESIGN_PARTNER.md).
+
+Apply: [open an audit request](https://github.com/beta-tester-code/agentforge/issues/new?template=design_partner.md) or email eron6237@gmail.com. Opening an issue is free.
 
 ## Name collision
 
