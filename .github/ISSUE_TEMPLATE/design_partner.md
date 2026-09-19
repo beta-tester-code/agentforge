@@ -1,30 +1,29 @@
 ---
-name: Design Partner Application
-about: Apply for a paid AgentForge design-partner audit / setup
+name: Audit request
+about: Fixed-scope token/context audit
 title: "[design-partner] "
 labels: design-partner
 ---
 
-## Stack
+**Stack**
 
 - Models:
-- Framework (LangGraph / CrewAI / custom / other):
-- Languages:
+- Framework:
+- Language:
 
-## Usage
+**Usage**
 
-- Approx monthly token spend or request volume:
-- Multi-step / tools? (yes/no):
+- Approx monthly token spend or volume:
+- Multi-step tools? (yes/no):
 
-## Pain
+**Main issue**
 
-- Main problem (cost / context drift / debugging / other):
+- Cost / drift / debugging / other:
 
-## Package interest
+**Package**
 
-- [ ] Audit only (USD 150)
-- [ ] Audit + setup (USD 400)
+- [ ] Audit only ($150)
+- [ ] Audit + setup ($400)
 
-## Notes
+**Notes**
 
-Anything else we should know:
