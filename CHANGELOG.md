@@ -1,20 +1,24 @@
 # Changelog
 
+## 0.3.0
+
+- Native OpenAI-style `tool_calls` in the runner (dict messages)
+- JSON Schema from type hints (`schema_from_callable`)
+- `compact_now` tool for model-requested compaction
+- Prefix-cache aware policy (`respect_prefix_cache` / `offload_only_until_ratio`)
+- Disk offload store (`offload_dir=`)
+- `cancel_check` for cooperative cancel
+- Streaming helper on `OpenAICompatibleClient.chat_stream`
+- Offline `scripts/eval_harness.py`
+
 ## 0.2.0
 
-- `RunResult`, `run_detailed()`, `last_result`
-- Memory/Message serialization
-- Context pressure markers
-- Stop after repeated tool errors
-- `Runner.reset()`
-- CI on 3.11 and 3.12
+- RunResult, memory serialization, pressure levels, error streak, CI
 
 ## 0.1.1
 
-- Tool description budget
-- Optional OpenAI-style tools helper on the HTTP client
-- Apache-2.0
+- Tool schema budget, Apache-2.0
 
 ## 0.1.0
 
-- First usable loop: tools, compaction, offload, CLI, tests
+- Initial loop: tools, compaction, offload, CLI, tests
