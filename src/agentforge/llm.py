@@ -1,10 +1,11 @@
-"""OpenAI-compatible HTTP client with light retries."""
+"""OpenAI-compatible HTTP client with retries and optional streaming."""
 
 from __future__ import annotations
 
+import json
 import os
 import time
-from typing import Any
+from typing import Any, Callable, Iterator
 
 import httpx
 
@@ -36,6 +37,12 @@ class OpenAICompatibleClient:
     def close(self) -> None:
         self._client.close()
 
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
     def chat(
         self,
         messages: list[dict[str, Any]],
@@ -56,18 +63,13 @@ class OpenAICompatibleClient:
             if tool_choice is not None:
                 payload["tool_choice"] = tool_choice
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
         last_err: Exception | None = None
         for attempt in range(self.max_retries):
             try:
                 resp = self._client.post(
                     f"{self.base_url}/chat/completions",
                     json=payload,
-                    headers=headers,
+                    headers=self._headers(),
                 )
             except httpx.HTTPError as e:
                 last_err = e
@@ -95,6 +97,50 @@ class OpenAICompatibleClient:
         content = msg.get("content") or ""
         return content if isinstance(content, str) else str(content)
 
+    def chat_stream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        on_token: Callable[[str], None] | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Stream tokens; returns full text. Tool calls are not streamed here."""
+        payload: dict[str, Any] = {
+            "model": kwargs.get("model", self.model),
+            "messages": messages,
+            "temperature": kwargs.get("temperature", 0.3),
+            "stream": True,
+        }
+        if "max_tokens" in kwargs:
+            payload["max_tokens"] = kwargs["max_tokens"]
+
+        parts: list[str] = []
+        with self._client.stream(
+            "POST",
+            f"{self.base_url}/chat/completions",
+            json=payload,
+            headers=self._headers(),
+        ) as resp:
+            if resp.status_code >= 400:
+                raise LLMError(f"LLM stream error {resp.status_code}: {resp.read().decode()}")
+            for line in resp.iter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                    delta = chunk["choices"][0].get("delta") or {}
+                    token = delta.get("content") or ""
+                except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                    continue
+                if token:
+                    parts.append(token)
+                    if on_token:
+                        on_token(token)
+        return "".join(parts)
+
 
 def make_llm_call(
     api_key: str | None = None,
@@ -109,25 +155,48 @@ def make_llm_call(
     return _call
 
 
+def make_llm_call_with_tools(
+    client: OpenAICompatibleClient,
+    tools: list[dict[str, Any]] | None = None,
+) -> Callable[[list[dict[str, Any]]], dict[str, Any]]:
+    """Return callable that returns full message dict (content + tool_calls)."""
+
+    def _call(messages: list[dict[str, Any]]) -> dict[str, Any]:
+        return client.chat(messages, tools=tools or None)
+
+    return _call
+
+
 def tools_to_openai_schema(tools: list[Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for t in tools:
+        if hasattr(t, "openai_schema"):
+            out.append(t.openai_schema())
+            continue
         name = getattr(t, "name", None)
         desc = getattr(t, "description", "") or ""
+        func = getattr(t, "func", None)
         if not name:
             continue
-        out.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": desc,
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "additionalProperties": True,
+        if func is not None:
+            out.append(openai_tool_from_callable(name, desc, func))
+        else:
+            out.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": desc,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": True,
+                        },
                     },
-                },
-            }
-        )
+                }
+            )
     return out
+
+
+# avoid circular import at runtime for type
+from agentforge.schema import openai_tool_from_callable  # noqa: E402

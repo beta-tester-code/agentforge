@@ -1,4 +1,4 @@
-"""Context compaction: offload, iterative summarize, head+tail retention."""
+"""Context compaction: offload, iterative summarize, head+tail, prefix-cache policy."""
 
 from __future__ import annotations
 
@@ -23,6 +23,10 @@ class CompactionConfig:
     summary_ratio: float = 0.2
     summary_min_tokens: int = 200
     summary_max_tokens: int = 1_200
+    # Prefer offload-only until this ratio; avoid rewriting prefix (cache-friendly).
+    offload_only_until_ratio: float = 0.90
+    # When True, summarization only if forced or explicit compact_now.
+    respect_prefix_cache: bool = False
 
 
 @dataclass
@@ -82,6 +86,7 @@ def offload_large_tool_results(
     memory: Memory,
     config: CompactionConfig,
     store: dict[str, str] | None = None,
+    put_fn: Callable[[str], str] | None = None,
 ) -> list[str]:
     actions: list[str] = []
     if store is None:
@@ -95,19 +100,21 @@ def offload_large_tool_results(
         if len(msg.content) <= config.max_tool_result_chars:
             continue
 
-        key = f"off_{_stable_key(msg.content)}"
-        store[key] = msg.content
-        structured = _json_preview(msg.content, config.max_tool_result_chars)
-        if structured:
-            preview = structured
+        if put_fn is not None:
+            key = put_fn(msg.content)
+            store[key] = msg.content  # keep mirror for in-proc recall
         else:
-            preview = msg.content[: config.max_tool_result_chars]
+            key = f"off_{_stable_key(msg.content)}"
+            store[key] = msg.content
+
+        structured = _json_preview(msg.content, config.max_tool_result_chars)
+        preview = structured if structured else msg.content[: config.max_tool_result_chars]
         msg.content = (
-            f"[offloaded:{key}] full={len(store[key])} chars. "
+            f"[offloaded:{key}] full={len(store.get(key, msg.content))} chars. "
             f"Use recall_offload(key=\"{key}\") for full content.\n"
             f"{preview}"
         )
-        if not structured and len(store[key]) > config.max_tool_result_chars:
+        if not structured:
             msg.content += "\n...[truncated]"
         msg.tokens = estimate_tokens(msg.content)
         msg.meta["offloaded"] = key
@@ -161,7 +168,6 @@ def default_summarizer(messages: list[Message]) -> str:
     decisions: list[str] = []
     artifacts: list[str] = []
     other: list[str] = []
-
     for m in messages:
         content = " ".join(m.content.split())
         if len(content) > 100:
@@ -174,7 +180,6 @@ def default_summarizer(messages: list[Message]) -> str:
             decisions.append(line)
         else:
             other.append(line)
-
     parts = [
         "## Progress",
         " | ".join(other[:12]) or "(none)",
@@ -203,6 +208,8 @@ def compact_memory(
     config: CompactionConfig,
     token_counter: Callable[[str], int] | None = None,
     summarizer: Callable[[list[Message]], str] | None = None,
+    force_summarize: bool = False,
+    put_fn: Callable[[str], str] | None = None,
 ) -> CompactionResult:
     counter = token_counter or estimate_tokens
     summarize = summarizer or default_summarizer
@@ -217,12 +224,20 @@ def compact_memory(
 
     if config.offload_tool_results:
         offload_store: dict[str, str] = memory.state.setdefault("_offload_store", {})
-        actions.extend(offload_large_tool_results(memory, config, offload_store))
+        actions.extend(
+            offload_large_tool_results(memory, config, offload_store, put_fn=put_fn)
+        )
 
     tokens_now = total_message_tokens(memory.messages)
     threshold = int(config.max_tokens * config.summarize_threshold_ratio)
+    offload_only_cut = int(config.max_tokens * config.offload_only_until_ratio)
 
-    if tokens_now > threshold and len(memory.messages) > 2:
+    allow_summarize = force_summarize or tokens_now > threshold
+    if config.respect_prefix_cache and not force_summarize:
+        # Only summarize when past the offload-only band (window almost full).
+        allow_summarize = tokens_now > offload_only_cut
+
+    if allow_summarize and len(memory.messages) > 2:
         older, recent = _select_tail(memory.messages, config)
         if older:
             task = _extract_task(older) if config.keep_task_message else None
@@ -234,7 +249,6 @@ def compact_memory(
                 and not (m.role == "system" and m.content.startswith("[context summary]"))
                 and m is not task
             ]
-
             summary_text = summarize(body) if body else "(empty middle)"
             if prev:
                 summary_text = (
@@ -243,10 +257,8 @@ def compact_memory(
                     + "\n## New since last compaction\n"
                     + summary_text
                 )
-
             if len(summary_text) > config.max_summary_chars:
                 summary_text = summary_text[: config.max_summary_chars - 3] + "..."
-
             summary_msg = Message(
                 role="system",
                 content=f"[context summary]\n{summary_text}",
@@ -255,6 +267,7 @@ def compact_memory(
                     "type": "compaction_summary",
                     "original_count": len(older),
                     "iterative": bool(prev),
+                    "forced": force_summarize,
                 },
             )
             head: list[Message] = []
@@ -265,6 +278,7 @@ def compact_memory(
                 f"summarized {len(older)} older -> summary"
                 + (" (iterative)" if prev else "")
                 + (" +task" if head else "")
+                + (" (forced)" if force_summarize else "")
             )
 
     tokens_after = total_message_tokens(memory.messages)
