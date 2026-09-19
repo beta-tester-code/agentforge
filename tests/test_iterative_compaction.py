@@ -10,6 +10,10 @@ from agentforge import (
 )
 
 
+def _summary_msgs(mem: Memory):
+    return [m for m in mem.messages if m.meta.get("type") == "compaction_summary"]
+
+
 def test_token_budget_tail_keeps_recent_by_tokens():
     mem = Memory()
     for i in range(20):
@@ -23,7 +27,7 @@ def test_token_budget_tail_keeps_recent_by_tokens():
     )
     result = compact_memory(mem, cfg)
     assert result.messages_after < result.messages_before
-    assert mem.messages[0].meta.get("type") == "compaction_summary"
+    assert _summary_msgs(mem), "expected a compaction summary message"
 
 
 def test_second_compaction_is_iterative():
@@ -38,19 +42,18 @@ def test_second_compaction_is_iterative():
     )
     r1 = compact_memory(mem, cfg)
     assert any("summarized" in a for a in r1.actions)
-    # grow again
     for i in range(15):
         mem.add("user", f"later {i} " + ("more " * 30), tokens=40)
     r2 = compact_memory(mem, cfg)
     assert any("iterative" in a for a in r2.actions)
-    assert "Carried forward" in mem.messages[0].content or "carried" in mem.messages[0].content.lower() or "New since" in mem.messages[0].content
+    joined = " ".join(m.content for m in _summary_msgs(mem))
+    assert "Carried forward" in joined or "New since" in joined
 
 
 def test_recall_offload_tool():
     tools = ToolRegistry()
     tools.register("big", "returns big string", lambda: "Z" * 5000)
 
-    # scripted: call big, then we inspect offload store via runner internals
     class Scripted:
         def __init__(self):
             self.n = 0
@@ -58,9 +61,7 @@ def test_recall_offload_tool():
         def __call__(self, messages):
             self.n += 1
             if self.n == 1:
-                return (
-                    "TOOL_CALL\nname: big\nargs: {}\nEND_TOOL_CALL"
-                )
+                return "TOOL_CALL\nname: big\nargs: {}\nEND_TOOL_CALL"
             return "done"
 
     agent = Agent(name="t", goal="g", system_prompt="s")

@@ -15,7 +15,6 @@ class CompactionConfig:
     max_tokens: int = 32_000
     keep_recent_messages: int = 6
     keep_recent_tokens: int = 4_000
-    # Keep the original task (first user message) when summarizing the middle.
     keep_task_message: bool = True
     summarize_threshold_ratio: float = 0.75
     offload_tool_results: bool = True
@@ -50,9 +49,8 @@ def _stable_key(content: str) -> str:
 
 
 def _json_preview(text: str, max_chars: int) -> str | None:
-    """If tool output is JSON, show structure instead of a blind prefix."""
     s = text.strip()
-    if not s or s[0] not in "{\[":
+    if not s or s[0] not in "{[":
         return None
     try:
         obj = json.loads(s)
@@ -260,10 +258,8 @@ def compact_memory(
                 },
             )
             head: list[Message] = []
-            if task is not None:
-                # Avoid duplicating task if it already sits in recent tail
-                if task not in recent:
-                    head.append(task)
+            if task is not None and task not in recent:
+                head.append(task)
             memory.messages = head + [summary_msg] + recent
             actions.append(
                 f"summarized {len(older)} older -> summary"

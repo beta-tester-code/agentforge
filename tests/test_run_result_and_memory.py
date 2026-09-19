@@ -45,7 +45,7 @@ def test_error_streak_stops():
     )
     result = runner.run_detailed("go", max_steps=10)
     assert result.stopped_reason == "error_streak"
-    assert "tool errors" in result.reply.lower() or "Error" in result.reply
+    assert "tool-error" in result.reply.lower() or "tool error" in result.reply.lower()
 
 
 def test_pressure_levels():

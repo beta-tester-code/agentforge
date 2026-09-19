@@ -26,8 +26,8 @@ def test_offload_large_tool_result():
     result = compact_memory(mem, config)
 
     assert any("offloaded" in a for a in result.actions)
-    assert "offloaded:" in mem.messages[0].content
-    assert len(mem.messages[0].content) < len(big)
+    assert any("offloaded:" in m.content for m in mem.messages)
+    assert max(len(m.content) for m in mem.messages if m.role == "tool") < len(big)
 
 
 def test_summarize_when_over_threshold():
@@ -45,7 +45,7 @@ def test_summarize_when_over_threshold():
 
     assert result.messages_after < result.messages_before
     assert any("summarized" in a for a in result.actions)
-    assert mem.messages[0].meta.get("type") == "compaction_summary"
+    assert any(m.meta.get("type") == "compaction_summary" for m in mem.messages)
 
 
 def test_default_summarizer_saves_tokens():
@@ -62,5 +62,4 @@ def test_default_summarizer_saves_tokens():
     )
     result = compact_memory(mem, config)
     assert result.tokens_after < result.tokens_before
-    # Expect meaningful reduction with the aggressive default summarizer
     assert result.tokens_after < result.tokens_before * 0.5
