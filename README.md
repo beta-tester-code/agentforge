@@ -6,12 +6,14 @@ If you've shipped something on LangGraph or CrewAI and watched the context windo
 
 ## What it does
 
-- Counts tokens per step
-- Offloads large tool results (with a `recall_offload` tool to pull them back)
-- Compacts older history with an iterative summary so the second pass does not erase the first
-- Keeps a recent tail by token budget, not a fixed message count
-- Caps how much tool schema gets injected every turn
-- Returns a `RunResult` with a full step trace
+- Counts tokens per step; returns a `RunResult` + step trace
+- Offloads large tool results (`recall_offload`); optional disk store via `offload_dir=`
+- Iterative summaries (second pass keeps the first) + keeps the original task message
+- Recent tail by token budget; optional prefix-cache-friendly mode (offload before summarize)
+- Text `TOOL_CALL` format and native OpenAI-style `tool_calls`
+- JSON Schema for tools inferred from type hints
+- `compact_now` tool so the model can request compaction after a subtask
+- Cooperative cancel via `cancel_check`; streaming helper on the HTTP client
 
 Requires Python 3.11+.
 
@@ -25,6 +27,7 @@ pip install -e ".[dev]"
 
 ```bash
 PYTHONPATH=src pytest -q
+PYTHONPATH=src python scripts/eval_harness.py
 ```
 
 ## Quick start
@@ -59,27 +62,26 @@ agent = Agent(
 )
 runner = Runner(agent, llm_call=llm)
 print(runner.run("Hello"))
-print(runner.last_result)  # tokens, tool_calls, stopped_reason, ...
+print(runner.last_result)
 ```
 
-Offline compaction check:
+Offline checks:
 
 ```bash
 PYTHONPATH=src python scripts/bench_compaction.py
+PYTHONPATH=src python scripts/eval_harness.py
 PYTHONPATH=src python examples/token_savings_demo.py
 ```
 
-More detail: [docs/TESTING.md](docs/TESTING.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+More: [docs/TESTING.md](docs/TESTING.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Paid help
 
-If you already have a multi-step agent in production and token cost or context drift is the bottleneck, I take a limited number of fixed-scope audits.
-
-Details and pricing: [DESIGN_PARTNER.md](DESIGN_PARTNER.md).
+Fixed-scope audits for production token/context issues: [DESIGN_PARTNER.md](DESIGN_PARTNER.md).
 
 ## Name collision
 
-Several unrelated projects use "AgentForge". This one is only the Python package in this repo (token/context tooling). Apache-2.0.
+Several unrelated projects use "AgentForge". This repo is only the Python package here. Apache-2.0.
 
 ## License
 
