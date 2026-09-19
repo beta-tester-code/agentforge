@@ -20,14 +20,14 @@ See [docs/WHY.md](docs/WHY.md) for the market argument.
 
 ## Status
 
-**v0.1.0 — usable MVP** · created 2026-09-17 · **0 stars / 0 paying customers** (honest).
+**v0.1.1 — usable MVP** · created 2026-09-17 · **0 stars / 0 paying customers** (honest).
 
 | Feature | Status |
 |---------|--------|
 | Agent + Memory + Tracer | ✅ |
 | Token counting (tiktoken) | ✅ |
 | Tool registry + multi-step tool loop | ✅ |
-| Tool-result offloading + summarization compaction | ✅ |
+| Tool-result offloading + iterative summarization | ✅ |
 | OpenAI-compatible client (OpenAI / Groq / Gemini / …) | ✅ |
 | CLI with provider presets | ✅ |
 | Mock + optional live tests | ✅ |
@@ -128,4 +128,4 @@ Opening an issue is the application, not a charge. Email fallback: `eron6237@gma
 
 ## License
 
-MIT
+Apache License 2.0 — see [LICENSE](LICENSE).
