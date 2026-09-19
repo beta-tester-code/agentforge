@@ -1,15 +1,9 @@
-"""Context compaction primitives.
-
-Engineering details that matter in production (2026 lessons):
-- Iterative summaries: each compaction PRESERVES prior summary content and ADDS progress
-  (without this, the 2nd compaction destroys the 1st).
-- Token-budget tail: protect recent context by tokens, not fixed message count.
-- Offload before summarize (reversible > destructive).
-- Structured summary fields: goal, decisions, artifacts, open questions.
-"""
+"""Context compaction: offload, iterative summarize, head+tail retention."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -18,13 +12,11 @@ from agentforge.memory import Message, Memory
 
 @dataclass
 class CompactionConfig:
-    """Controls when and how context is reduced."""
-
     max_tokens: int = 32_000
     keep_recent_messages: int = 6
-    # Prefer token budget for tail when set (>0). Falls back to keep_recent_messages
-    # if the token budget would retain the entire history (otherwise we never compact).
     keep_recent_tokens: int = 4_000
+    # Keep the original task (first user message) when summarizing the middle.
+    keep_task_message: bool = True
     summarize_threshold_ratio: float = 0.75
     offload_tool_results: bool = True
     max_tool_result_chars: int = 2_000
@@ -53,12 +45,46 @@ def total_message_tokens(messages: list[Message]) -> int:
     return sum(m.tokens or estimate_tokens(m.content) for m in messages)
 
 
+def _stable_key(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:12]
+
+
+def _json_preview(text: str, max_chars: int) -> str | None:
+    """If tool output is JSON, show structure instead of a blind prefix."""
+    s = text.strip()
+    if not s or s[0] not in "{\[":
+        return None
+    try:
+        obj = json.loads(s)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(obj, dict):
+        keys = list(obj.keys())[:20]
+        parts = [f"json object keys={keys}"]
+        for k in keys[:5]:
+            v = obj[k]
+            if isinstance(v, (dict, list)):
+                parts.append(f"  {k}: {type(v).__name__} len={len(v)}")
+            else:
+                sv = repr(v)
+                if len(sv) > 80:
+                    sv = sv[:77] + "..."
+                parts.append(f"  {k}: {sv}")
+        out = "\n".join(parts)
+    elif isinstance(obj, list):
+        out = f"json array len={len(obj)} sample={json.dumps(obj[:3], default=str)[: max_chars // 2]}"
+    else:
+        return None
+    if len(out) > max_chars:
+        out = out[: max_chars - 3] + "..."
+    return out
+
+
 def offload_large_tool_results(
     memory: Memory,
     config: CompactionConfig,
     store: dict[str, str] | None = None,
 ) -> list[str]:
-    """Replace large tool outputs with preview + pointer (reversible)."""
     actions: list[str] = []
     if store is None:
         store = {}
@@ -71,17 +97,23 @@ def offload_large_tool_results(
         if len(msg.content) <= config.max_tool_result_chars:
             continue
 
-        key = f"tool_result_{i}_{len(store)}"
+        key = f"off_{_stable_key(msg.content)}"
         store[key] = msg.content
-        preview = msg.content[: config.max_tool_result_chars]
+        structured = _json_preview(msg.content, config.max_tool_result_chars)
+        if structured:
+            preview = structured
+        else:
+            preview = msg.content[: config.max_tool_result_chars]
         msg.content = (
-            f"[offloaded:{key}] preview ({len(store[key])} chars). "
-            f"Use recall_offload(key=\"{key}\") to read full content.\n"
-            f"{preview}\n...[truncated]"
+            f"[offloaded:{key}] full={len(store[key])} chars. "
+            f"Use recall_offload(key=\"{key}\") for full content.\n"
+            f"{preview}"
         )
+        if not structured and len(store[key]) > config.max_tool_result_chars:
+            msg.content += "\n...[truncated]"
         msg.tokens = estimate_tokens(msg.content)
         msg.meta["offloaded"] = key
-        actions.append(f"offloaded tool result at index {i} -> {key}")
+        actions.append(f"offloaded tool@{i} -> {key}")
 
     return actions
 
@@ -110,26 +142,24 @@ def _tail_by_tokens(messages: list[Message], budget: int) -> tuple[list[Message]
 
 
 def _select_tail(messages: list[Message], config: CompactionConfig) -> tuple[list[Message], list[Message]]:
-    """Split into older + recent tail.
-
-    Token budget is preferred, but if it would keep *everything* we fall back to
-    message count so compaction can still fire when over threshold.
-    """
     if not messages:
         return [], []
-
     if config.keep_recent_tokens > 0:
         older, tail = _tail_by_tokens(messages, config.keep_recent_tokens)
         if older:
             return older, tail
-        # Token budget swallowed the whole history — force message-based split
         return _tail_by_messages(messages, config.keep_recent_messages)
-
     return _tail_by_messages(messages, config.keep_recent_messages)
 
 
+def _extract_task(messages: list[Message]) -> Message | None:
+    for m in messages:
+        if m.role == "user" and m.meta.get("type") != "goal_reanchor":
+            return m
+    return None
+
+
 def default_summarizer(messages: list[Message]) -> str:
-    """Aggressive extractive fallback with structured sections."""
     decisions: list[str] = []
     artifacts: list[str] = []
     other: list[str] = []
@@ -176,7 +206,6 @@ def compact_memory(
     token_counter: Callable[[str], int] | None = None,
     summarizer: Callable[[list[Message]], str] | None = None,
 ) -> CompactionResult:
-    """Apply compaction strategy to memory."""
     counter = token_counter or estimate_tokens
     summarize = summarizer or default_summarizer
 
@@ -198,15 +227,17 @@ def compact_memory(
     if tokens_now > threshold and len(memory.messages) > 2:
         older, recent = _select_tail(memory.messages, config)
         if older:
+            task = _extract_task(older) if config.keep_task_message else None
             prev = _extract_previous_summary(older)
             body = [
                 m
                 for m in older
                 if m.meta.get("type") != "compaction_summary"
                 and not (m.role == "system" and m.content.startswith("[context summary]"))
+                and m is not task
             ]
 
-            summary_text = summarize(body)
+            summary_text = summarize(body) if body else "(empty middle)"
             if prev:
                 summary_text = (
                     "## Carried forward\n"
@@ -228,10 +259,16 @@ def compact_memory(
                     "iterative": bool(prev),
                 },
             )
-            memory.messages = [summary_msg] + recent
+            head: list[Message] = []
+            if task is not None:
+                # Avoid duplicating task if it already sits in recent tail
+                if task not in recent:
+                    head.append(task)
+            memory.messages = head + [summary_msg] + recent
             actions.append(
-                f"summarized {len(older)} older messages into 1 summary"
+                f"summarized {len(older)} older -> summary"
                 + (" (iterative)" if prev else "")
+                + (" +task" if head else "")
             )
 
     tokens_after = total_message_tokens(memory.messages)
@@ -247,29 +284,21 @@ def compact_memory(
 def make_llm_summarizer(
     llm_call: Callable[[list[dict[str, str]]], str],
 ) -> Callable[[list[Message]], str]:
-    """Build a structured LLM summarizer."""
-
     def _summarize(messages: list[Message]) -> str:
-        transcript = []
-        for m in messages:
-            transcript.append(f"{m.role.upper()}: {m.content}")
+        transcript = [f"{m.role.upper()}: {m.content}" for m in messages]
         body = "\n".join(transcript)
         if len(body) > 12_000:
             body = body[:12_000] + "\n...[truncated for summarizer]"
-
         prompt = [
             {
                 "role": "system",
                 "content": (
-                    "Compress agent history into a dense structured brief.\n"
-                    "Sections (use exactly these headings):\n"
-                    "## Goal\n## Decisions\n## Artifacts\n## Open questions\n## Next\n"
-                    "Preserve file paths, tool names, numbers, and constraints. "
-                    "Drop chatter and repeated failed attempts unless they constrain future work. "
-                    "Return only the brief."
+                    "Compress agent history into a dense brief.\n"
+                    "Sections: ## Goal ## Decisions ## Artifacts ## Open ## Next\n"
+                    "Keep paths, tool names, numbers, constraints. Drop chatter."
                 ),
             },
-            {"role": "user", "content": f"History to compress:\n\n{body}"},
+            {"role": "user", "content": f"History:\n\n{body}"},
         ]
         return llm_call(prompt).strip()
 

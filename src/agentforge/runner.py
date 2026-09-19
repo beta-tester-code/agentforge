@@ -1,4 +1,4 @@
-"""Agent runner with token tracking, compaction, LLM and tool loop."""
+"""Agent runner: tool loop, compaction, traces."""
 
 from __future__ import annotations
 
@@ -7,11 +7,7 @@ import re
 from typing import Any, Callable
 
 from agentforge.agent import Agent
-from agentforge.compaction import (
-    CompactionConfig,
-    compact_memory,
-    make_llm_summarizer,
-)
+from agentforge.compaction import CompactionConfig, compact_memory, make_llm_summarizer
 from agentforge.memory import Memory
 from agentforge.observability import Tracer
 from agentforge.pressure import pressure_level
@@ -19,37 +15,14 @@ from agentforge.result import RunResult
 from agentforge.tokens import get_token_counter
 from agentforge.tools import ToolRegistry
 
-
 TOOL_CALL_RE = re.compile(
-    r"TOOL_CALL\s*\n\s*name:\s*(?P<name>\S+)\s*\n\s*args:\s*(?P<args>\{.*\})\s*\n\s*END_TOOL_CALL",
+    r"TOOL_CALL\s*\n\s*name:\s*(?P<name>\S+)\s*\n\s*args:\s*(?P<args>\{.*?\})\s*\n\s*END_TOOL_CALL",
     re.DOTALL | re.IGNORECASE,
 )
-
 TOOL_JSON_RE = re.compile(
     r"```(?:json)?\s*(\{\s*\"name\"\s*:.*?\})\s*```",
     re.DOTALL | re.IGNORECASE,
 )
-
-
-def _parse_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
-    m = TOOL_CALL_RE.search(text)
-    if m:
-        name = m.group("name").strip()
-        raw_args = m.group("args").strip()
-        return name, _loads_obj(raw_args)
-
-    m2 = TOOL_JSON_RE.search(text)
-    if m2:
-        try:
-            obj = json.loads(m2.group(1))
-        except json.JSONDecodeError:
-            return None
-        if isinstance(obj, dict) and "name" in obj:
-            args = obj.get("args") or obj.get("arguments") or {}
-            if not isinstance(args, dict):
-                args = {}
-            return str(obj["name"]), args
-    return None
 
 
 def _loads_obj(raw: str) -> dict[str, Any]:
@@ -68,9 +41,32 @@ def _loads_obj(raw: str) -> dict[str, Any]:
         return {}
 
 
-class Runner:
-    """Executes an agent with optional tools, observability and compaction."""
+def _parse_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
+    calls = _parse_all_tool_calls(text)
+    return calls[0] if calls else None
 
+
+def _parse_all_tool_calls(text: str) -> list[tuple[str, dict[str, Any]]]:
+    """Return every tool call found (order preserved)."""
+    found: list[tuple[str, dict[str, Any]]] = []
+    for m in TOOL_CALL_RE.finditer(text):
+        found.append((m.group("name").strip(), _loads_obj(m.group("args").strip())))
+    if found:
+        return found
+    for m in TOOL_JSON_RE.finditer(text):
+        try:
+            obj = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "name" in obj:
+            args = obj.get("args") or obj.get("arguments") or {}
+            if not isinstance(args, dict):
+                args = {}
+            found.append((str(obj["name"]), args))
+    return found
+
+
+class Runner:
     def __init__(
         self,
         agent: Agent,
@@ -118,17 +114,15 @@ class Runner:
 
             self.tools.register(
                 "recall_offload",
-                'Retrieve full offloaded tool content. args: {"key": "tool_result_..."}',
+                'Retrieve full offloaded tool content. args: {"key": "off_..."}',
                 recall_offload,
             )
 
     def reset(self) -> None:
-        """Clear memory, tracer and step counter for a fresh run."""
         self.memory = Memory()
         self.tracer = Tracer()
         self.step = 0
         self.last_result = None
-        # keep system prompt cache — agent/tools unchanged
 
     def _count(self, text: str) -> int:
         return self.token_counter(text)
@@ -136,25 +130,18 @@ class Runner:
     def _system_prompt(self) -> str:
         if self._system_prompt_cache is not None:
             return self._system_prompt_cache
-
         parts = [self.agent.system_prompt]
         if self.agent.goal:
             parts.append(f"Goal: {self.agent.goal}")
-
         tool_desc = self.tools.descriptions(max_chars=self.tool_schema_max_chars)
         if tool_desc and tool_desc != "(no tools registered)":
             parts.append(
-                "You can call tools using this exact format:\n"
-                "TOOL_CALL\n"
-                "name: <tool_name>\n"
-                "args: {\"key\": \"value\"}\n"
-                "END_TOOL_CALL\n\n"
-                "Alternatively, a single fenced JSON block:\n"
-                '```json\n{"name": "<tool_name>", "args": {"key": "value"}}\n```\n\n'
-                "Available tools:\n"
-                f"{tool_desc}\n\n"
-                "After a tool result, continue reasoning. "
-                "Final answers must not include a tool call."
+                "Tools — use this format:\n"
+                "TOOL_CALL\nname: <tool_name>\nargs: {\"key\": \"value\"}\nEND_TOOL_CALL\n\n"
+                "Or a fenced JSON block with name/args. "
+                "You may emit multiple TOOL_CALL blocks in one reply.\n\n"
+                f"Available tools:\n{tool_desc}\n\n"
+                "After tool results, continue. Final answer: no tool call."
             )
         self._system_prompt_cache = "\n\n".join(parts)
         return self._system_prompt_cache
@@ -168,13 +155,9 @@ class Runner:
         level = pressure_level(tokens_now, self.compaction_config.max_tokens)
         if level.name == "warn":
             self.tracer.record(
-                self.step,
-                "pressure_warn",
-                input_tokens=tokens_now,
-                level=level.name,
-                ratio=round(level.ratio, 3),
+                self.step, "pressure_warn", input_tokens=tokens_now,
+                level=level.name, ratio=round(level.ratio, 3),
             )
-
         result = compact_memory(
             self.memory,
             self.compaction_config,
@@ -183,8 +166,7 @@ class Runner:
         )
         if result.actions:
             self.tracer.record(
-                self.step,
-                "compaction",
+                self.step, "compaction",
                 input_tokens=result.tokens_before,
                 output_tokens=result.tokens_after,
                 actions=result.actions,
@@ -192,23 +174,12 @@ class Runner:
                 messages_after=result.messages_after,
                 pressure=level.name,
             )
-            if (
-                self.reanchor_goal
-                and self.agent.goal
-                and result.messages_after < before_len
-            ):
+            if self.reanchor_goal and self.agent.goal and result.messages_after < before_len:
                 anchor = f"[goal reminder] {self.agent.goal}"
-                self.memory.add(
-                    "system",
-                    anchor,
-                    tokens=self._count(anchor),
-                    type="goal_reanchor",
-                )
+                self.memory.add("system", anchor, tokens=self._count(anchor), type="goal_reanchor")
 
     def _build_messages(self) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": self._system_prompt()}
-        ]
+        messages: list[dict[str, str]] = [{"role": "system", "content": self._system_prompt()}]
         for m in self.memory.messages:
             role = m.role if m.role in ("user", "assistant", "system", "tool") else "user"
             if role == "tool":
@@ -252,10 +223,6 @@ class Runner:
         return result
 
     def run(self, user_input: str, max_steps: int = 8) -> str:
-        """Run until final answer or stop condition. Returns reply text.
-
-        Full metrics: ``runner.last_result`` or ``run_detailed(...)``.
-        """
         return self.run_detailed(user_input, max_steps=max_steps).reply
 
     def run_detailed(self, user_input: str, max_steps: int = 8) -> RunResult:
@@ -286,50 +253,46 @@ class Runner:
             reply = self.llm_call(messages)
             reply_tokens = self._count(reply)
 
-            parsed = _parse_tool_call(reply)
-            if parsed is None:
+            calls = _parse_all_tool_calls(reply)
+            if not calls:
                 self.memory.add("assistant", reply, tokens=reply_tokens)
                 self.tracer.record(
-                    self.step,
-                    "assistant_reply",
-                    input_tokens=prompt_tokens,
-                    output_tokens=reply_tokens,
+                    self.step, "assistant_reply",
+                    input_tokens=prompt_tokens, output_tokens=reply_tokens,
                 )
                 self.step += 1
                 final_reply = reply
                 stopped = "completed"
                 break
 
-            tool_name, tool_args = parsed
             self.memory.add("assistant", reply, tokens=reply_tokens)
             self.tracer.record(
-                self.step,
-                "tool_call",
-                input_tokens=prompt_tokens,
-                output_tokens=reply_tokens,
-                tool=tool_name,
-                args=tool_args,
+                self.step, "tool_call",
+                input_tokens=prompt_tokens, output_tokens=reply_tokens,
+                tools=[c[0] for c in calls],
             )
             self.step += 1
 
-            tool_result = self._execute_tool(tool_name, tool_args)
-            tool_tokens = self._count(tool_result)
-            self.memory.add("tool", tool_result, tokens=tool_tokens, tool=tool_name)
-            self.tracer.record(
-                self.step,
-                "tool_result",
-                input_tokens=tool_tokens,
-                tool=tool_name,
-                is_error=tool_result.startswith("Error"),
-            )
-            self.step += 1
+            any_error = False
+            for tool_name, tool_args in calls:
+                tool_result = self._execute_tool(tool_name, tool_args)
+                tool_tokens = self._count(tool_result)
+                self.memory.add("tool", tool_result, tokens=tool_tokens, tool=tool_name)
+                self.tracer.record(
+                    self.step, "tool_result",
+                    input_tokens=tool_tokens, tool=tool_name,
+                    is_error=tool_result.startswith("Error"),
+                )
+                self.step += 1
+                if tool_result.startswith("Error"):
+                    any_error = True
 
-            if tool_result.startswith("Error"):
+            if any_error:
                 tool_error_streak += 1
                 if tool_error_streak >= self.max_tool_errors:
                     final_reply = (
-                        f"[AgentForge] stopped after {tool_error_streak} consecutive tool errors. "
-                        f"Last: {tool_result[:200]}"
+                        f"[AgentForge] stopped after {tool_error_streak} consecutive "
+                        f"tool-error turns."
                     )
                     stopped = "error_streak"
                     break
