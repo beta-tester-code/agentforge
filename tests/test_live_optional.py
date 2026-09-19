@@ -24,7 +24,7 @@ def _llm():
         "AGENTFORGE_BASE_URL",
         "https://generativelanguage.googleapis.com/v1beta/openai/",
     )
-    model = os.getenv("AGENTFORGE_MODEL", "gemini-3.5-flash")
+    model = os.getenv("AGENTFORGE_MODEL", "gemini-3.6-flash")
     return make_llm_call(base_url=base, model=model)
 
 
