@@ -1,4 +1,4 @@
-"""Agent runner: text + native tool loop, compaction, cancel, traces."""
+"""Agent runner: text + native tool loop, compaction, cancel, budget, traces."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from agentforge.pressure import pressure_level
 from agentforge.result import RunResult
 from agentforge.tokens import get_token_counter
 from agentforge.tools import ToolRegistry
+from agentforge.trace_store import TraceStore
 
 TOOL_CALL_RE = re.compile(
     r"TOOL_CALL\s*\n\s*name:\s*(?P<name>\S+)\s*\n\s*args:\s*(?P<args>\{.*?\})\s*\n\s*END_TOOL_CALL",
@@ -60,15 +61,11 @@ def _parse_all_tool_calls(text: str) -> list[tuple[str, dict[str, Any]]]:
     return found
 
 
-def _parse_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
-    calls = _parse_all_tool_calls(text)
-    return calls[0] if calls else None
-
-
-def _native_tool_calls(message: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """Extract OpenAI-style tool_calls from a message dict."""
+def _native_tool_calls(
+    message: dict[str, Any],
+) -> list[tuple[str, dict[str, Any], str | None]]:
     raw = message.get("tool_calls") or []
-    out: list[tuple[str, dict[str, Any]]] = []
+    out: list[tuple[str, dict[str, Any], str | None]] = []
     for tc in raw:
         try:
             fn = tc.get("function") or {}
@@ -80,8 +77,9 @@ def _native_tool_calls(message: dict[str, Any]) -> list[tuple[str, dict[str, Any
                 args = json.loads(args_raw) if args_raw else {}
             if not isinstance(args, dict):
                 args = {}
+            tid = tc.get("id")
             if name:
-                out.append((str(name), args))
+                out.append((str(name), args, tid))
         except (TypeError, json.JSONDecodeError, AttributeError):
             continue
     return out
@@ -106,6 +104,8 @@ class Runner:
         use_native_tools: bool = False,
         offload_dir: str | None = None,
         cancel_check: Callable[[], bool] | None = None,
+        trace_path: str | None = None,
+        hard_token_budget: int | None = None,
     ):
         self.agent = agent
         self.tools = tools or ToolRegistry()
@@ -120,9 +120,11 @@ class Runner:
         self.max_tool_errors = max_tool_errors
         self.use_native_tools = use_native_tools
         self.cancel_check = cancel_check
+        self.hard_token_budget = hard_token_budget
         self._system_prompt_cache: str | None = None
         self.last_result: RunResult | None = None
         self._force_compact = False
+        self._trace_store = TraceStore(trace_path) if trace_path else None
 
         if offload_dir:
             self._disk = DiskOffloadStore(offload_dir)
@@ -133,6 +135,7 @@ class Runner:
 
         self._summarizer: Callable | None = None
         if use_llm_summarizer and llm_call is not None:
+
             def _text_call(messages: list[dict[str, str]]) -> str:
                 out = llm_call(messages)
                 if isinstance(out, dict):
@@ -235,8 +238,11 @@ class Runner:
         level = pressure_level(tokens_now, self.compaction_config.max_tokens)
         if level.name == "warn":
             self.tracer.record(
-                self.step, "pressure_warn", input_tokens=tokens_now,
-                level=level.name, ratio=round(level.ratio, 3),
+                self.step,
+                "pressure_warn",
+                input_tokens=tokens_now,
+                level=level.name,
+                ratio=round(level.ratio, 3),
             )
         result = compact_memory(
             self.memory,
@@ -249,7 +255,8 @@ class Runner:
         self._force_compact = False
         if result.actions:
             self.tracer.record(
-                self.step, "compaction",
+                self.step,
+                "compaction",
                 input_tokens=result.tokens_before,
                 output_tokens=result.tokens_after,
                 actions=result.actions,
@@ -259,20 +266,31 @@ class Runner:
             )
             if self.reanchor_goal and self.agent.goal and result.messages_after < before_len:
                 anchor = f"[goal reminder] {self.agent.goal}"
-                self.memory.add("system", anchor, tokens=self._count(anchor), type="goal_reanchor")
+                self.memory.add(
+                    "system", anchor, tokens=self._count(anchor), type="goal_reanchor"
+                )
 
     def _build_messages(self) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = [{"role": "system", "content": self._system_prompt()}]
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self._system_prompt()}
+        ]
         for m in self.memory.messages:
             role = m.role if m.role in ("user", "assistant", "system", "tool") else "user"
             if role == "tool":
-                messages.append(
-                    {
-                        "role": "tool" if self.use_native_tools else "user",
-                        "content": m.content if self.use_native_tools else f"[tool result]\n{m.content}",
-                        **({"name": m.meta.get("tool", "tool")} if self.use_native_tools else {}),
+                if self.use_native_tools:
+                    item: dict[str, Any] = {
+                        "role": "tool",
+                        "content": m.content,
                     }
-                )
+                    if m.meta.get("tool_call_id"):
+                        item["tool_call_id"] = m.meta["tool_call_id"]
+                    if m.meta.get("tool"):
+                        item["name"] = m.meta["tool"]
+                    messages.append(item)
+                else:
+                    messages.append(
+                        {"role": "user", "content": f"[tool result]\n{m.content}"}
+                    )
             else:
                 messages.append({"role": role, "content": m.content})
         return messages
@@ -307,6 +325,11 @@ class Runner:
             by_action=dict(by),
         )
         self.last_result = result
+        if self._trace_store is not None:
+            self._trace_store.append(
+                result,
+                meta={"agent": self.agent.name, "goal": self.agent.goal},
+            )
         return result
 
     def run(self, user_input: str, max_steps: int = 8) -> str:
@@ -328,6 +351,16 @@ class Runner:
                 stopped = "cancelled"
                 break
 
+            if self.hard_token_budget is not None:
+                spent = self.tracer.summary().get("total_tokens", 0)
+                if spent >= self.hard_token_budget:
+                    final_reply = (
+                        f"[AgentForge] hard token budget reached ({spent}/"
+                        f"{self.hard_token_budget})."
+                    )
+                    stopped = "budget"
+                    break
+
             if self.llm_call is None:
                 final_reply = (
                     f"[AgentForge] Received: {user_input!r}. "
@@ -335,7 +368,9 @@ class Runner:
                 )
                 reply_tokens = self._count(final_reply)
                 self.memory.add("assistant", final_reply, tokens=reply_tokens)
-                self.tracer.record(self.step, "assistant_reply", output_tokens=reply_tokens)
+                self.tracer.record(
+                    self.step, "assistant_reply", output_tokens=reply_tokens
+                )
                 self.step += 1
                 stopped = "skeleton"
                 break
@@ -344,24 +379,32 @@ class Runner:
             prompt_tokens = self._estimate_prompt_tokens(messages)
 
             raw = self.llm_call(messages)
+            native_with_ids: list[tuple[str, dict[str, Any], str | None]] = []
             if isinstance(raw, dict):
                 content = str(raw.get("content") or "")
-                calls = _native_tool_calls(raw)
+                native_with_ids = _native_tool_calls(raw)
+                calls = [(n, a) for n, a, _ in native_with_ids]
                 if not calls and content:
                     calls = _parse_all_tool_calls(content)
-                reply_for_mem = content or json.dumps(raw.get("tool_calls") or [], default=str)
+                    native_with_ids = [(n, a, None) for n, a in calls]
+                reply_for_mem = content or json.dumps(
+                    raw.get("tool_calls") or [], default=str
+                )
             else:
                 content = str(raw)
                 calls = _parse_all_tool_calls(content)
+                native_with_ids = [(n, a, None) for n, a in calls]
                 reply_for_mem = content
 
             reply_tokens = self._count(reply_for_mem)
 
-            if not calls:
+            if not native_with_ids:
                 self.memory.add("assistant", reply_for_mem, tokens=reply_tokens)
                 self.tracer.record(
-                    self.step, "assistant_reply",
-                    input_tokens=prompt_tokens, output_tokens=reply_tokens,
+                    self.step,
+                    "assistant_reply",
+                    input_tokens=prompt_tokens,
+                    output_tokens=reply_tokens,
                 )
                 self.step += 1
                 final_reply = content or reply_for_mem
@@ -370,47 +413,61 @@ class Runner:
 
             self.memory.add("assistant", reply_for_mem, tokens=reply_tokens)
             self.tracer.record(
-                self.step, "tool_call",
-                input_tokens=prompt_tokens, output_tokens=reply_tokens,
-                tools=[c[0] for c in calls],
+                self.step,
+                "tool_call",
+                input_tokens=prompt_tokens,
+                output_tokens=reply_tokens,
+                tools=[c[0] for c in native_with_ids],
             )
             self.step += 1
 
             any_error = False
-            for tool_name, tool_args in calls:
+            cancelled = False
+            for tool_name, tool_args, tool_call_id in native_with_ids:
                 if self._cancelled():
                     final_reply = "[AgentForge] cancelled"
                     stopped = "cancelled"
+                    cancelled = True
                     break
                 tool_result = self._execute_tool(tool_name, tool_args)
                 tool_tokens = self._count(tool_result)
-                self.memory.add("tool", tool_result, tokens=tool_tokens, tool=tool_name)
+                meta: dict[str, Any] = {"tool": tool_name}
+                if tool_call_id:
+                    meta["tool_call_id"] = tool_call_id
+                self.memory.add(
+                    "tool", tool_result, tokens=tool_tokens, **meta
+                )
                 self.tracer.record(
-                    self.step, "tool_result",
-                    input_tokens=tool_tokens, tool=tool_name,
+                    self.step,
+                    "tool_result",
+                    input_tokens=tool_tokens,
+                    tool=tool_name,
                     is_error=tool_result.startswith("Error"),
                 )
                 self.step += 1
                 if tool_result.startswith("Error"):
                     any_error = True
+
+            if cancelled:
+                break
+
+            if any_error:
+                tool_error_streak += 1
+                if tool_error_streak >= self.max_tool_errors:
+                    final_reply = (
+                        f"[AgentForge] stopped after {tool_error_streak} consecutive "
+                        f"tool-error turns."
+                    )
+                    stopped = "error_streak"
+                    break
             else:
-                # for-else: only if we didn't break on cancel
-                if any_error:
-                    tool_error_streak += 1
-                    if tool_error_streak >= self.max_tool_errors:
-                        final_reply = (
-                            f"[AgentForge] stopped after {tool_error_streak} consecutive "
-                            f"tool-error turns."
-                        )
-                        stopped = "error_streak"
-                        break
-                else:
-                    tool_error_streak = 0
-                self._maybe_compact()
-                continue
-            break  # cancelled mid tools
+                tool_error_streak = 0
+
+            self._maybe_compact()
         else:
-            final_reply = final_reply or "[AgentForge] max_steps reached without final answer."
+            final_reply = final_reply or (
+                "[AgentForge] max_steps reached without final answer."
+            )
             stopped = "max_steps"
 
         self._maybe_compact()

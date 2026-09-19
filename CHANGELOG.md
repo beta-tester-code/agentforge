@@ -1,24 +1,21 @@
 # Changelog
 
+## 0.4.0
+
+- `BoundLLM` / `bind_llm` — attach tool schemas to every HTTP turn
+- `TraceStore` — append-only JSONL of `RunResult`
+- `run_subagent` / `subagent_tool` — isolated child window
+- `hard_token_budget` stop reason
+- Native tool results carry `tool_call_id` when present
+
 ## 0.3.0
 
-- Native OpenAI-style `tool_calls` in the runner (dict messages)
-- JSON Schema from type hints (`schema_from_callable`)
-- `compact_now` tool for model-requested compaction
-- Prefix-cache aware policy (`respect_prefix_cache` / `offload_only_until_ratio`)
-- Disk offload store (`offload_dir=`)
-- `cancel_check` for cooperative cancel
-- Streaming helper on `OpenAICompatibleClient.chat_stream`
-- Offline `scripts/eval_harness.py`
+- Native tool_calls, schema from hints, compact_now, prefix-cache, disk offload, eval, stream/cancel
 
 ## 0.2.0
 
-- RunResult, memory serialization, pressure levels, error streak, CI
-
-## 0.1.1
-
-- Tool schema budget, Apache-2.0
+- RunResult, memory serialization, pressure, error streak, CI
 
 ## 0.1.0
 
-- Initial loop: tools, compaction, offload, CLI, tests
+- Initial loop
