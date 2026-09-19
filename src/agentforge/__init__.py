@@ -13,7 +13,7 @@ from agentforge.runner import Runner
 from agentforge.tools import Tool, ToolRegistry
 from agentforge.tokens import get_token_counter
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "Agent",

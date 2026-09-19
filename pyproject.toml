@@ -1,6 +1,6 @@
 [project]
 name = "agentforge"
-version = "0.1.0"
+version = "0.1.1"
 description = "Open-source toolkit for building reliable, token-efficient AI agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,6 +30,11 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
 ]
+
+[project.urls]
+Homepage = "https://github.com/beta-tester-code/agentforge"
+Repository = "https://github.com/beta-tester-code/agentforge"
+Issues = "https://github.com/beta-tester-code/agentforge/issues"
 
 [project.scripts]
 agentforge = "agentforge.cli:main"
