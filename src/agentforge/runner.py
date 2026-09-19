@@ -14,6 +14,8 @@ from agentforge.compaction import (
 )
 from agentforge.memory import Memory
 from agentforge.observability import Tracer
+from agentforge.pressure import pressure_level
+from agentforge.result import RunResult
 from agentforge.tokens import get_token_counter
 from agentforge.tools import ToolRegistry
 
@@ -82,6 +84,7 @@ class Runner:
         reanchor_goal: bool = True,
         enable_offload_recall: bool = True,
         tool_schema_max_chars: int = 2_500,
+        max_tool_errors: int = 3,
     ):
         self.agent = agent
         self.tools = tools or ToolRegistry()
@@ -93,7 +96,9 @@ class Runner:
         self.llm_call = llm_call
         self.reanchor_goal = reanchor_goal
         self.tool_schema_max_chars = tool_schema_max_chars
+        self.max_tool_errors = max_tool_errors
         self._system_prompt_cache: str | None = None
+        self.last_result: RunResult | None = None
 
         self._summarizer: Callable | None = None
         if use_llm_summarizer and llm_call is not None:
@@ -116,6 +121,14 @@ class Runner:
                 'Retrieve full offloaded tool content. args: {"key": "tool_result_..."}',
                 recall_offload,
             )
+
+    def reset(self) -> None:
+        """Clear memory, tracer and step counter for a fresh run."""
+        self.memory = Memory()
+        self.tracer = Tracer()
+        self.step = 0
+        self.last_result = None
+        # keep system prompt cache — agent/tools unchanged
 
     def _count(self, text: str) -> int:
         return self.token_counter(text)
@@ -151,6 +164,17 @@ class Runner:
 
     def _maybe_compact(self) -> None:
         before_len = len(self.memory.messages)
+        tokens_now = self.memory.token_total()
+        level = pressure_level(tokens_now, self.compaction_config.max_tokens)
+        if level.name == "warn":
+            self.tracer.record(
+                self.step,
+                "pressure_warn",
+                input_tokens=tokens_now,
+                level=level.name,
+                ratio=round(level.ratio, 3),
+            )
+
         result = compact_memory(
             self.memory,
             self.compaction_config,
@@ -166,6 +190,7 @@ class Runner:
                 actions=result.actions,
                 messages_before=result.messages_before,
                 messages_after=result.messages_after,
+                pressure=level.name,
             )
             if (
                 self.reanchor_goal
@@ -208,13 +233,40 @@ class Runner:
         except Exception as e:
             return f"Error executing tool '{name}': {e}"
 
+    def _build_result(self, reply: str, stopped_reason: str) -> RunResult:
+        summary = self.tracer.summary()
+        by = summary.get("by_action") or {}
+        result = RunResult(
+            reply=reply,
+            steps=summary.get("steps", 0),
+            input_tokens=summary.get("input_tokens", 0),
+            output_tokens=summary.get("output_tokens", 0),
+            total_tokens=summary.get("total_tokens", 0),
+            tool_calls=int(by.get("tool_call", 0)),
+            compactions=int(by.get("compaction", 0)),
+            stopped_reason=stopped_reason,
+            trace=self.tracer.steps(),
+            by_action=dict(by),
+        )
+        self.last_result = result
+        return result
+
     def run(self, user_input: str, max_steps: int = 8) -> str:
+        """Run until final answer or stop condition. Returns reply text.
+
+        Full metrics: ``runner.last_result`` or ``run_detailed(...)``.
+        """
+        return self.run_detailed(user_input, max_steps=max_steps).reply
+
+    def run_detailed(self, user_input: str, max_steps: int = 8) -> RunResult:
         user_tokens = self._count(user_input)
         self.memory.add("user", user_input, tokens=user_tokens)
         self.tracer.record(self.step, "user_input", input_tokens=user_tokens)
         self.step += 1
 
         final_reply = ""
+        stopped = "completed"
+        tool_error_streak = 0
 
         for _ in range(max_steps):
             if self.llm_call is None:
@@ -226,6 +278,7 @@ class Runner:
                 self.memory.add("assistant", final_reply, tokens=reply_tokens)
                 self.tracer.record(self.step, "assistant_reply", output_tokens=reply_tokens)
                 self.step += 1
+                stopped = "skeleton"
                 break
 
             messages = self._build_messages()
@@ -244,6 +297,7 @@ class Runner:
                 )
                 self.step += 1
                 final_reply = reply
+                stopped = "completed"
                 break
 
             tool_name, tool_args = parsed
@@ -266,15 +320,29 @@ class Runner:
                 "tool_result",
                 input_tokens=tool_tokens,
                 tool=tool_name,
+                is_error=tool_result.startswith("Error"),
             )
             self.step += 1
+
+            if tool_result.startswith("Error"):
+                tool_error_streak += 1
+                if tool_error_streak >= self.max_tool_errors:
+                    final_reply = (
+                        f"[AgentForge] stopped after {tool_error_streak} consecutive tool errors. "
+                        f"Last: {tool_result[:200]}"
+                    )
+                    stopped = "error_streak"
+                    break
+            else:
+                tool_error_streak = 0
 
             self._maybe_compact()
         else:
             final_reply = final_reply or "[AgentForge] max_steps reached without final answer."
+            stopped = "max_steps"
 
         self._maybe_compact()
-        return final_reply
+        return self._build_result(final_reply, stopped)
 
     def get_trace_summary(self) -> dict[str, Any]:
         return self.tracer.summary()
