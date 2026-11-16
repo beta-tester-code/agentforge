@@ -7,6 +7,7 @@ Not a LangGraph/CrewAI replacement. A small loop + compaction + local traces.
 | LangGraph | Graphs, checkpoints | You compose write/select/compress/isolate | If you add it | No — you adopt the graph |
 | CrewAI | Role crews | Summarize on overflow (`respect_context_window`) | Weak | No |
 | Headroom | Proxy that compresses prompts in front of a model | Lossy payload compression | Yes (proxy metrics) | Yes, as infra |
+| OpenAI Responses / Agents | Managed agent loop | Vendor compaction (opaque) | Managed / proprietary | No (proprietary runtime) |
 | TanStack AI `withCompaction` | Chat middleware | Evict / summarize / stub tool results | Estimate or custom | JS/TS chat |
 | **This repo** | Python runner | Offload fat tool results, keep task head + token-budget tail, iterative summaries, optional `compact_now` | tiktoken per step + `RunResult` | Yes, next to a custom loop |
 
